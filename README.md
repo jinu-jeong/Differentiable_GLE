@@ -17,9 +17,19 @@ The code in this repository corresponds to our paper:
 - ✅ **Validation on Complex Fluids**: Demonstrated on H2O, CO2, and Confined H₂O.
 
 ## Requirements
-- Download dataset: https://uofi.box.com/s/gruyslzav75ibbg0qjlh877f37le78c4
+- Download dataset: [uofi.box.com](https://uofi.box.com/s/gruyslzav75ibbg0qjlh877f37le78c4)
 - Ensure you have the following dependencies installed:
 
 ```bash
 pip install torch torchdiffeq
+```
 
+
+## 🔗 Additional Resources
+🔍 Don't forget to check out other works from our research group:  
+➡️ [MultiNano Group GitHub Repository](https://github.com/multinanogroup)  
+
+
+📜 License & Copyright
+© 2025 Jinu Jeong, Ishan Nadkarni, Narayana R. Aluru. All rights reserved.
+This project is licensed under the MIT License. See the LICENSE file for details.
