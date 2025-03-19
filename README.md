@@ -14,7 +14,7 @@ The code in this repository corresponds to our paper:
 - ✅ **End-to-End Differentiable Simulation**: Implements a differentiable molecular dynamics (CGMD) framework.
 - ✅ **Generalized Langevin Equation (GLE) Parameterization**: Uses a colored noise ansatz to parameterize memory kernels.
 - ✅ **Adjoint-state methods for Optimization**: Efficiently optimizes CG models with memory kernel and colored thermal noise.
-- ✅ **Validation on Complex Fluids**: Demonstrated on H₂O, CO₂, CH₄, and Confined H₂O.
+- ✅ **Validation on Complex Fluids**: Demonstrated on H2O, CO2, and Confined H₂O.
 
 ## Requirements
 Ensure you have the following dependencies installed:
