@@ -17,7 +17,9 @@ The code in this repository corresponds to our paper:
 - ✅ **Validation on Complex Fluids**: Demonstrated on H2O, CO2, and Confined H₂O.
 
 ## Requirements
-Ensure you have the following dependencies installed:
+- Download dataset: https://uofi.box.com/s/gruyslzav75ibbg0qjlh877f37le78c4
+- Ensure you have the following dependencies installed:
 
 ```bash
 pip install torch torchdiffeq
+
