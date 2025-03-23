@@ -322,7 +322,7 @@ plt.show()
 
 # %% 3.1 Training Loop for Dynamics Optimization (Optional if Trained)
 # Dynamics Optimization Setup
-optimizer = torch.optim.SGD(func.parameters(), lr=1e-3, weight_decay=1e-6)
+optimizer = torch.optim.Adam(func.parameters(), lr=3e-4, weight_decay=1e-6, betas=[0.1, 0.1])
 
 # Create Necessary Directories
 output_dir = f"Result/{MOLECULE}/"
@@ -342,15 +342,6 @@ if MOLECULE=="Confined_H2O":
 
 # Optimization core
 for iter in range(300):
-    # First Simulation Step (Equilibration)
-    T = 200
-    t = torch.tensor(np.arange(0, DT / TIMEFACTOR * T, DT / TIMEFACTOR)).to(DEVICE)
-    
-    with torch.no_grad():
-        y_curr = odeint_adjoint(func, y0, t, method="euler")
-    
-    y0 = y_curr[-1].detach()
-
     # Mini-Batch Optimization
     for minibatch in range(1):
         T = max([Thermostat_GLE.filter_length, VACF_computer.td_max]) + 10
@@ -424,6 +415,13 @@ for iter in range(300):
         plt.legend()
         plt.tight_layout()
         plt.show()
+
+    # Equilibration
+    T = min([len(Thermostat_GLE.memory_kernel), abs(VACF_computer.td_max-len(Thermostat_GLE.memory_kernel))])
+    t = torch.tensor(np.arange(0, DT / TIMEFACTOR * T, DT / TIMEFACTOR)).to(DEVICE)
+    with torch.no_grad():
+        y_curr = odeint_adjoint(func, y0, t, method="euler")
+    y0 = y_curr[-1].detach()
 
 # Cancel annotation below if you want to use your own model.
 # torch.save(func.state_dict(), f"{model_dict_dir}model_state_dict_iter_final.pth")
