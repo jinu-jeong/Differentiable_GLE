@@ -134,6 +134,14 @@ class GLE_TS(torch.nn.Module):
         self.v_list = None
         self.w_list = None
         self.w_history = []
+        self.delta_v_langevin_history = []  # Store delta_v_langevin for forward process
+        self.delta_v_langevin_history_backward = []  # Store delta_v_langevin for backward process
+        self.delta_v_langevin_stored = []  # Store delta_v_langevin values from forward pass for comparison
+        # Store random and friction values from forward pass for reuse in backward pass
+        # Use time t as key for lookup
+        self.random_stored = {}  # Store random values from forward pass: {t: random}
+        self.friction_stored = {}  # Store friction values from forward pass: {t: friction}
+        self.forward_step_count = 0  # Track forward pass step count
         self.mode = "forward"
 
     def construct_memory(self, T, mass, dt):
@@ -152,13 +160,17 @@ class GLE_TS(torch.nn.Module):
 
         if self.mode == "forward":
             self.v_list = torch.roll(self.v_list, -1, dims=2)
-            self.v_list[:, :, -1] = v.view(-1, 1).clone().detach()
+            v_detached = v.view(-1, 1).clone().detach()
+            self.v_list[:, :, -1] = v_detached
             self.w_list = torch.roll(self.w_list, -1, dims=2)
-            self.w_list[:, :, -1] = torch.randn_like(v, device=v.device).view(-1, 1)
+            w_noise = torch.randn_like(v, device=v.device).view(-1, 1)
+            self.w_list[:, :, -1] = w_noise
+            self.forward_step_count += 1
         else:
-            self.v_list[:, :, -1] = torch.zeros_like(v, device=v.device).view(-1, 1)
+            # In backward mode, just roll without generating new noise
+            # The actual random and friction values will be reused from forward pass
+            # in the forward() method
             self.v_list = torch.roll(self.v_list, 1, dims=2)
-            self.w_list[:, :, -1] = torch.zeros_like(v, device=v.device).view(-1, 1)
             self.w_list = torch.roll(self.w_list, 1, dims=2)
 
     def forward(self, v, T, dt, mass, t):
@@ -166,13 +178,64 @@ class GLE_TS(torch.nn.Module):
         self.construct_memory(T, mass, dt)
         self.get_v_and_sample_w(v, dt)
 
-        friction = -torch.nn.functional.conv1d(self.v_list[:, :, -self.filter_length:], self.memory_kernel.flip(2))
-        random = torch.nn.functional.conv1d(self.w_list[:, :, -self.filter_length:], self.h.flip(2).detach())
-        delta_v_langevin = friction.view(v.shape) + random.view(v.shape)
+        if self.mode == "forward":
+            # Forward pass: compute friction and random normally
+            friction = -torch.nn.functional.conv1d(self.v_list[:, :, -self.filter_length:], self.memory_kernel.flip(2))
+            random = torch.nn.functional.conv1d(self.w_list[:, :, -self.filter_length:], self.h.flip(2).detach())
+            delta_v_langevin = friction.view(v.shape) + random.view(v.shape)
+            
+            # Store friction and random for reuse in backward pass using time t as key
+            t_key = t.item() if isinstance(t, torch.Tensor) else float(t)
+            self.friction_stored[t_key] = friction.clone().detach()
+            self.random_stored[t_key] = random.clone().detach()
+        else:
+            # Backward pass: reuse stored friction and random from forward pass using time t
+            t_key = t.item() if isinstance(t, torch.Tensor) else float(t)
+            
+            if t_key in self.random_stored and t_key in self.friction_stored:
+                # Reuse stored values from forward pass
+                friction = self.friction_stored[t_key].to(v.device)
+                random = self.random_stored[t_key].to(v.device)
+                delta_v_langevin = friction.view(v.shape) + random.view(v.shape)
+            else:
+                # Fallback: compute normally (shouldn't happen if forward pass stored all values)
+                print(f"Warning: time {t_key} not found in stored values. Using fallback computation.")
+                friction = -torch.nn.functional.conv1d(self.v_list[:, :, -self.filter_length:], self.memory_kernel.flip(2))
+                random = torch.nn.functional.conv1d(self.w_list[:, :, -self.filter_length:], self.h.flip(2).detach())
+                delta_v_langevin = friction.view(v.shape) + random.view(v.shape)
 
         if len(self.w_history) == (self.filter_length * 2):
             self.w_history.pop(0)
-        self.w_history.append(random.clone().detach().cpu().numpy().flatten())
+        # Use the computed random value for history
+        if self.mode == "forward":
+            random_for_history = random
+        else:
+            # In backward mode, use stored random value
+            t_key = t.item() if isinstance(t, torch.Tensor) else float(t)
+            if t_key in self.random_stored:
+                random_for_history = self.random_stored[t_key]
+            else:
+                random_for_history = random  # Fallback
+        self.w_history.append(random_for_history.clone().detach().cpu().numpy().flatten())
+        
+        # Store delta_v_langevin for plotting (store magnitude or full vector)
+        # Store the magnitude (norm) of delta_v_langevin for each atom, then average
+        delta_v_magnitude = delta_v_langevin.norm(dim=1).mean().item()  # Average magnitude across atoms
+        
+        if self.mode == "forward":
+            self.delta_v_langevin_history.append(delta_v_magnitude)
+            # Store the actual delta_v_langevin value for comparison in backward pass
+            self.delta_v_langevin_stored.append(delta_v_langevin.clone().detach())
+        else:  # backward mode
+            self.delta_v_langevin_history_backward.append(delta_v_magnitude)
+            # Compare with stored forward values if available
+            if len(self.delta_v_langevin_stored) > len(self.delta_v_langevin_history_backward) - 1:
+                stored_idx = len(self.delta_v_langevin_history_backward) - 1
+                stored_delta_v = self.delta_v_langevin_stored[stored_idx]
+                # Check if they match (within numerical precision)
+                diff = (delta_v_langevin - stored_delta_v).norm().item()
+                if diff > 1e-6:  # If difference is significant, log it
+                    print(f"Warning: delta_v_langevin mismatch at step {stored_idx}, diff = {diff}")
 
         return delta_v_langevin
 
@@ -217,7 +280,7 @@ class GLE_TS(torch.nn.Module):
 
 # Define GLE Thermostat
 Thermostat_GLE = GLE_TS(
-    gamma_uniform=0.001, 
+    gamma_uniform=0.0015, 
     filter_length=CONFIG[MOLECULE]["filter_length"]
 ).to(DEVICE)
 
@@ -322,7 +385,8 @@ plt.show()
 
 # %% 3.1 Training Loop for Dynamics Optimization (Optional if Trained)
 # Dynamics Optimization Setup
-optimizer = torch.optim.Adam(func.parameters(), lr=3e-4, weight_decay=1e-6, betas=[0.1, 0.1])
+optimizer = torch.optim.Adam(func.parameters(), lr=3e-4, weight_decay=1e-5)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.1)
 
 # Create Necessary Directories
 output_dir = f"Result/{MOLECULE}/"
@@ -342,34 +406,48 @@ if MOLECULE=="Confined_H2O":
 
 # Optimization core
 for iter in range(300):
-    # Mini-Batch Optimization
-    for minibatch in range(1):
-        T = max([Thermostat_GLE.filter_length, VACF_computer.td_max]) + 10
-        t = torch.tensor(np.arange(0, DT / TIMEFACTOR * T, DT / TIMEFACTOR)).to(DEVICE)
-        
-        y_curr = odeint_adjoint(func, y0, t, method="euler")
-        y0 = y_curr[Thermostat_GLE.filter_length + 1].detach()
+    # Clear delta_v_langevin history for this iteration
+    Thermostat_GLE.delta_v_langevin_history = []
+    Thermostat_GLE.delta_v_langevin_history_backward = []
+    Thermostat_GLE.delta_v_langevin_stored = []
+    Thermostat_GLE.forward_step_count = 0
+    Thermostat_GLE.random_stored = {}
+    Thermostat_GLE.friction_stored = {}
+    
+    # Initialization: Run 100 timesteps without gradient computation
+    T_init = 1
+    t_init = torch.tensor(np.arange(0, DT / TIMEFACTOR * T_init, DT / TIMEFACTOR)).to(DEVICE)
+    with torch.no_grad():
+        y_init = odeint_adjoint(func, y0, t_init, method="euler")
+        y0 = y_init[-1].detach()
+    
+    # Main optimization step
+    T = max([Thermostat_GLE.filter_length, VACF_computer.td_max]) + 10
+    t = torch.tensor(np.arange(0, DT / TIMEFACTOR * T, DT / TIMEFACTOR)).to(DEVICE)
+    
+    y_curr = odeint_adjoint(func, y0, t, method="euler")
+    y0 = y_curr[Thermostat_GLE.filter_length + 1].detach()
 
-        # Compute VACF
-        VACF_curr = VACF_computer(y_curr[:, :N_ATOMS])
+    # Compute VACF
+    VACF_curr = VACF_computer(y_curr[:, :N_ATOMS])
 
-        # Compute Loss
-        VACF_difference = VACF_curr - VACF_AA
-        loss = VACF_difference.pow(2).sum()
+    # Compute Loss
+    VACF_difference = VACF_curr - VACF_AA
+    loss = VACF_difference.pow(2).sum()
 
-        # Backpropagation
-        optimizer.zero_grad()
-        Thermostat_GLE.mode = "forward"
-        loss.backward(retain_graph=True)
-
-        # Flip Velocity and Noise History for Consistency
-        func.Thermostat.v_list[:, :, -Thermostat_GLE.filter_length:] = \
-            func.Thermostat.v_list[:, :, -Thermostat_GLE.filter_length:].flip(2)
-        func.Thermostat.w_list[:, :, -Thermostat_GLE.filter_length:] = \
-            func.Thermostat.w_list[:, :, -Thermostat_GLE.filter_length:].flip(2)
+    # Backpropagation
+    optimizer.zero_grad()
+    loss.backward(retain_graph=True)
+    
+    # Flip velocity and noise history for consistency (Option 2)
+    func.Thermostat.v_list[:, :, -Thermostat_GLE.filter_length:] = \
+        func.Thermostat.v_list[:, :, -Thermostat_GLE.filter_length:].flip(2)
+    func.Thermostat.w_list[:, :, -Thermostat_GLE.filter_length:] = \
+        func.Thermostat.w_list[:, :, -Thermostat_GLE.filter_length:].flip(2)
 
     # Update Parameters
     optimizer.step()
+    scheduler.step()
 
     # Logging
     memory_kernel_sum = Thermostat_GLE.memory_kernel.clone().detach().cpu().flatten().sum()
@@ -378,6 +456,24 @@ for iter in range(300):
         y_curr[Thermostat_GLE.filter_length, :N_ATOMS], 
         func.Thermostat.v_list[:, :, -1].view(-1, 3)
     ))
+    
+    # Plot delta_v_langevin vs time for this iteration
+    if len(Thermostat_GLE.delta_v_langevin_history) > 0:
+        time_steps = np.arange(len(Thermostat_GLE.delta_v_langevin_history))
+        plt.figure(figsize=(10, 6))
+        plt.plot(time_steps, Thermostat_GLE.delta_v_langevin_history, 'b-', linewidth=1.5, label='Forward')
+        plt.xlabel("Time Step")
+        plt.ylabel("|delta_v_langevin| (Average Magnitude)")
+        plt.title(f"delta_v_langevin vs Time - Iteration {iter}")
+        plt.grid(True, alpha=0.3)
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(f"{optimization_plots_dir}delta_v_langevin_iter_{iter}.png", dpi=150)
+        plt.close()
+        
+        # Save numerical values
+        torch.save(torch.tensor(Thermostat_GLE.delta_v_langevin_history), 
+                  f"{optimization_plots_dir}delta_v_langevin_forward_iter_{iter}.pt")
 
     # Save Numerical Values
     torch.save(VACF_curr.detach().cpu(), f"{optimization_plots_dir}VACF_curr_iter_{iter}.pt")
@@ -416,13 +512,6 @@ for iter in range(300):
         plt.tight_layout()
         plt.show()
 
-    # Equilibration
-    T = min([len(Thermostat_GLE.memory_kernel), abs(VACF_computer.td_max-len(Thermostat_GLE.memory_kernel))])
-    t = torch.tensor(np.arange(0, DT / TIMEFACTOR * T, DT / TIMEFACTOR)).to(DEVICE)
-    with torch.no_grad():
-        y_curr = odeint_adjoint(func, y0, t, method="euler")
-    y0 = y_curr[-1].detach()
-
 # Cancel annotation below if you want to use your own model.
 # torch.save(func.state_dict(), f"{model_dict_dir}model_state_dict_iter_final.pth")
 
@@ -434,7 +523,7 @@ func.eval()
 print("Model successfully loaded!")
 
 # Define Long Simulation Parameters
-T_long = 3000  # Number of time steps
+T_long = 10000  # Number of time steps
 t_long = torch.tensor(np.arange(0, DT / TIMEFACTOR * T_long, DT / TIMEFACTOR)).to(DEVICE)
 
 # Set Initial Condition
