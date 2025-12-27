@@ -1,390 +1,533 @@
-#%%
-"""
-Learning Kernel
-
-Target system : LJ
-
-"""
-#%%
+# %% Import Libraries
 import os
-os.chdir('/workspace/jinu/GLE')
-
-
 import numpy as np
 import matplotlib.pyplot as plt
-
-
 import torch
 import torch.nn as nn
 
-
-from torchmd.systems import System
-from torchmd.integrator import maxwell_boltzmann
-
-X = torch.tensor(np.load("./Water/AA/dump.npy"))
-V = torch.tensor(np.load("./Water/AA/vel.npy"))
-
-global Natom, precision, device, mass, TIMEFACTOR, dt
-Natom = X.shape[1]
-precision = torch.float
-device = "cuda:0"
-mass = torch.full((Natom,1), 18.0).to(device)
-TIMEFACTOR = 48.88821
-BOLTZMAN = 0.001987191
-dt = 1 #fs
-
-
-system = System(Natom, nreplicas=1, precision=precision, device=device)
-system.set_positions(X[-1][:,:,None] % 40.0)
-system.set_box(np.array([40.0,40.0,40.0]))
-system.set_velocities(maxwell_boltzmann(mass, T=300, replicas=1))
-
-#%% Select force
 from force import *
-
-Tabulated_data = np.loadtxt("./Water/CG/"+"CG_CG.pot", skiprows=3)
-nan_rows = np.isnan(Tabulated_data[:, -1])
-Tabulated_data = Tabulated_data[~nan_rows]
-potential_GT = Tabulated(system.box[0], Tabulated_data).to(device)
-
-Thermostat_LE = Langevin_TS(gamma = 0.05).to(device)
-#Thermostat = Langevin_TS(gamma = 0.05, Trainable=True).to(device)
-
 from utility import *
-func= SDE(potential_GT, Thermostat=Thermostat_LE, Temp_target=300, timestep=dt, TIMEFACTOR=TIMEFACTOR, mass=mass, non_integrand_mask=None, saver=False)
-func.force_mode=True
-
-#%% Define initial condition
-q, cell, v = system.pos[0], system.box[0], system.vel[0]
-y0 = torch.concatenate((v,q))
-f0 = func(0., y0)
-
-#%% Simulation prep
-T = 2000
 
 from torchdiffeq import odeint_adjoint
-y0 = torch.concatenate((v,q))
-t = (torch.tensor(np.arange(0, dt/TIMEFACTOR*T, dt/TIMEFACTOR))).to(device)
 
-RDF = RDF_computer(cell, device)
-MSD = MSD_computer(1000)
-VACF = VACF_computer(500)
+# Set global font size for matplotlib
+plt.rcParams.update({"font.size": 16})
 
+# Reproducibility (IMPORTANT for deterministic adjoint with pre-sampled noise)
+torch.manual_seed(0)
+np.random.seed(0)
 
-#%% Equilibration
+# %% Configuration
+CONFIG = {
+    "CO2": {"mass": 44.0, "box": [40, 40, 40], "filter_length": 1000},
+    "H2O": {"mass": 18.0, "box": [40, 40, 40], "filter_length": 1000},
+    "Confined_H2O": {"mass": 18.0, "box": [25.174493, 29.778001, 112], "filter_length": 1000},
+}
+
+MOLECULE = "H2O"
+
+# %% Global Variables
+DEVICE = "cuda:0"
+PRECISION = torch.float
+TIMEFACTOR = 48.88821
+BOLTZMAN = 0.001987191
+DT = 1  # femtoseconds (fs)
+
+# Physical time step used by the integrator time-grid (same as your t construction)
+DT_PHYS = DT / TIMEFACTOR
+
+# %% Load Data
+X = torch.tensor(np.load(f"./{MOLECULE}/AA/pos_COM.npy"), dtype=PRECISION, device=DEVICE)
+V = torch.tensor(np.load(f"./{MOLECULE}/AA/vel_COM.npy"), dtype=PRECISION, device=DEVICE)
+
+N_ATOMS = X.shape[1]
+MASS = torch.full((N_ATOMS, 1), CONFIG[MOLECULE]["mass"], dtype=PRECISION, device=DEVICE)
+
+# %% Functions
+def initialize_system(positions, velocities, box, device=DEVICE, precision=PRECISION):
+    """Initializes the simulation system with positions, velocities, and a diagonalized box."""
+    positions = torch.tensor(positions, dtype=precision, device=device)
+    velocities = torch.tensor(velocities, dtype=precision, device=device)
+    box = torch.diag(torch.tensor(box[:3], dtype=precision, device=device))
+    return positions, velocities, box
+
+def maxwell_boltzmann_velocity(masses, temperature, device=DEVICE, boltzmann=BOLTZMAN):
+    """Generate Maxwell-Boltzmann distributed velocities in 3D."""
+    stddev = torch.sqrt(boltzmann * temperature / masses)  # (N, 1)
+    velocities = torch.normal(mean=0.0, std=stddev.repeat(1, 3)).to(device)  # (N, 3)
+    return velocities
+
+def wrap_positions(q, box_diag):
+    """Wrap positions into [0, L) using a differentiable-ish remainder (piecewise)."""
+    return q - torch.floor(q / box_diag) * box_diag
+
+# %% Initialize System
+positions, velocities, box = initialize_system(
+    positions=(X[-1] % CONFIG[MOLECULE]["box"][0]),
+    velocities=maxwell_boltzmann_velocity(MASS, temperature=300),
+    box=CONFIG[MOLECULE]["box"],
+)
+q, cell, v = positions, box, velocities
+box_diag = torch.diag(cell).view(1, 3)
+
+# %% Load Potential
+tabulated_data = np.loadtxt(f"./{MOLECULE}/CG/CG_CG.pot", skiprows=3)
+tabulated_data = tabulated_data[~np.isnan(tabulated_data[:, -1])]
+potential_gt = Tabulated(cell, tabulated_data).to(DEVICE)
+
+# =============================================================================
+# 1) Demonstration with Langevin Thermostat (UNCHANGED)
+# =============================================================================
+thermostat_Langevin = Langevin_TS(gamma=0.05).to(DEVICE)
+simulation_Langevin = SDE(
+    potential_gt,
+    Thermostat=thermostat_Langevin,
+    Temp_target=300,
+    timestep=DT,
+    TIMEFACTOR=TIMEFACTOR,
+    mass=MASS,
+    non_integrand_mask=None,
+    saver=False,
+)
+simulation_Langevin.force_mode = True
+
+y0 = torch.cat((v, q))
+_ = simulation_Langevin(0.0, y0)
+
+T = 2000
+t = torch.tensor(np.arange(0, DT_PHYS * T, DT_PHYS), dtype=PRECISION, device=DEVICE)
+
 with torch.no_grad():
-    y_vanilla = odeint_adjoint(func, y0, t, method="euler")
+    y_Langevin = odeint_adjoint(simulation_Langevin, y0, t, method="euler")
 
-plt.plot(func.Temperature_log, 'k')
-
-#%% compute RDF
-
-r_vanilla, RDF_vanilla = RDF(y_vanilla[::10,Natom:])
-MSD_vanilla = MSD(y_vanilla[:,Natom:])
-VACF_vanilla = VACF(y_vanilla[:,:Natom])
-
-
-
-plt.plot(r_vanilla.cpu(), RDF_vanilla.cpu(), 'k')
-plt.show()
-plt.plot(MSD_vanilla.cpu(), 'k')
-plt.show()
-plt.plot(VACF_vanilla.cpu(), 'k')
+plt.plot(simulation_Langevin.Temperature_log, "k")
+plt.xlabel("Time Steps")
+plt.ylabel("Temperature (K)")
 plt.show()
 
+RDF_computer = RDF_computer(cell, DEVICE)
+MSD_computer = MSD_computer(1000)
+VACF_computer = VACF_computer(1000)
+VACF_computer.normalize = True
+VACF_computer.ensemble_average = True
 
-#%%
-#%%
-#%%
+r_Langevin, RDF_Langevin = RDF_computer(y_Langevin[::10, N_ATOMS:])
+MSD_Langevin = MSD_computer(y_Langevin[:, N_ATOMS:])
+VACF_Langevin = VACF_computer(y_Langevin[:, :N_ATOMS])
 
-class GLE_TS(torch.nn.Module):
-    def __init__(self, h=None, gamma_uniform=0.001, filter_length=None, BOLTZMAN=0.001987191):
-        super(GLE_TS, self).__init__()
-        
-        self.BOLTZMAN = BOLTZMAN
-        self.filter_length = filter_length
-        
-        # Initialize h as a learnable parameter if Trainable is True
-        #self.h = torch.nn.Parameter(torch.full((self.filter_length ,), gamma_uniform)[None,None,:])
+plt.plot(r_Langevin.cpu(), RDF_Langevin.cpu(), "k")
+plt.xlabel("Distance (Å)")
+plt.ylabel("RDF")
+plt.show()
 
-        dummy = torch.full((self.filter_length ,), gamma_uniform)
-        self.h = torch.nn.Parameter(dummy[None,None,:])
-        
+plt.plot(MSD_Langevin.cpu(), "k")
+plt.xlabel("Time Steps")
+plt.ylabel("MSD (Å²)")
+plt.show()
 
-        #self.h = torch.nn.Parameter(torch.tensor([0.5, 0.0])[None,None,:])
-        #self.filter_length = 2
+plt.plot(VACF_Langevin.cpu(), "k")
+plt.xlabel("Time Steps")
+plt.ylabel("VACF")
+plt.show()
 
-        #dummy = torch.linspace(0, 2*np.pi, self.filter_length)
-        #dummy = gamma_uniform*torch.exp(-100*dummy)
-        #self.h = torch.nn.Parameter(dummy[None,None,:])
+# =============================================================================
+# 2) OPTION A (RECOMMENDED): Markovian embedding with sum-of-exponentials kernel
+#    - No internal mutable history buffers
+#    - No torch.randn() inside forward
+#    - Noise is pre-sampled and indexed by time-grid => deterministic for adjoint
+# =============================================================================
 
-        # Placeholder for the memory kernel
-        #self.construct_memory(, mass, 0.1)
-        self.v_list = None
-        self.w_list = None
+class ExpKernelMarkovianGLE(nn.Module):
+    """
+    Markovian embedding for a GLE whose memory kernel is parameterized as:
+        K(t) = sum_{i=1..M} kappa_i * exp(-lambda_i t),   with kappa_i >= 0, lambda_i > 0
 
-        self.w_history = []
+    Auxiliary variables s_i follow:
+        ds_i = (-lambda_i s_i + kappa_i v) dt + sqrt(2 k_B T kappa_i lambda_i) dW_i
+    and velocity follows:
+        dv = (F(q) - sum_i s_i) / m * dt
 
-        self.mode = "forward"
+    We implement it as a deterministic ODEFunc for torchdiffeq-euler by
+    pre-sampling eps ~ N(0,1) and using:
+        dW_i ≈ sqrt(dt) * eps[n]
+    so inside the derivative we inject:
+        (sqrt(2 k_B T kappa_i lambda_i) * eps[n]) / sqrt(dt)
+    because Euler step multiplies by dt.
+    """
 
-    def construct_memory(self, T, mass, dt):
-        h_padded = torch.nn.functional.pad(self.h, (0, self.h.size(2)-1)).detach()
-        # TODO : remove hack: mass[0]
-        self.theoretical_RACF = torch.nn.functional.conv1d(h_padded, self.h) # first time factor for sigma sqaure, second time factor for integration
-        self.memory_kernel = self.theoretical_RACF * mass[0,0].item() * dt / (self.BOLTZMAN * T)
-        
-        self.memory_kernel_trapezoidal = self.memory_kernel.clone()
-        #self.memory_kernel_trapezoidal[..., 0] *= 0.5
-        #self.memory_kernel_trapezoidal[..., -1] *= 0.5 # This was zero and will be zero.
+    def __init__(
+        self,
+        potential,
+        cell,
+        mass,
+        temp_target=300.0,
+        kB=BOLTZMAN,
+        dt=DT_PHYS,
+        n_modes=8,
+        seed=0,
+        max_steps_noise=20000,
+        log_temperature=False,
+    ):
+        super().__init__()
+        self.potential = potential
+        self.cell = cell
+        self.mass = mass
+        self.temp_target = float(temp_target)
+        self.kB = float(kB)
+        self.dt = float(dt)
+        self.n_modes = int(n_modes)
 
-    def get_v_and_sample_w(self, v, dt):
-        # initial
-        if self.v_list == None:
-            Natom = len(v.flatten())//3
-            self.v_list = torch.zeros(Natom*3, 1, self.filter_length*2 + 1 , device=v.device)
-            self.w_list = torch.zeros(Natom*3, 1, self.filter_length*2 + 1 , device=v.device)
-        
-        
-        
-        # Update velocity and noise lists
-        if self.mode=="forward":
-            self.v_list = torch.roll(self.v_list, -1, dims=2)
-            self.v_list[:,:,-1] = v.view(-1,1).clone().detach()
-            self.w_list = torch.roll(self.w_list, -1, dims=2)
-            self.w_list[:,:,-1] = torch.randn_like(v, device=v.device).view(-1,1)
+        # positivity constraints via softplus
+        # initialize to something mild (you can tune)
+        self._raw_lambdas = nn.Parameter(torch.full((self.n_modes,), 1.0, dtype=PRECISION, device=DEVICE))
+        self._raw_kappas  = nn.Parameter(torch.full((self.n_modes,), 1e-3, dtype=PRECISION, device=DEVICE))
+
+        self.softplus = nn.Softplus()
+
+        # pre-sampled noise schedule: shape (max_steps, N, 3, M)
+        self.max_steps_noise = int(max_steps_noise)
+        self.seed = int(seed)
+        self.register_buffer("_noise_eps", torch.zeros(1, dtype=PRECISION, device=DEVICE), persistent=False)
+        self._build_noise_schedule(self.seed, self.max_steps_noise)
+
+        # optional logging (OFF during training with adjoint; ON for evaluation)
+        self.log_temperature = bool(log_temperature)
+        self.Temperature_log = []
+
+        # cache sizes
+        self.N = int(self.mass.shape[0])
+        self.box_diag = torch.diag(self.cell).view(1, 3)
+
+    def _build_noise_schedule(self, seed, max_steps):
+        g = torch.Generator(device=DEVICE)
+        g.manual_seed(seed)
+        # eps ~ N(0,1)
+        eps = torch.randn(
+            (max_steps, self.N, 3, self.n_modes),
+            dtype=PRECISION,
+            device=DEVICE,
+            generator=g,
+        )
+        self._noise_eps = eps
+
+    def resample_noise(self, seed=None):
+        if seed is None:
+            seed = self.seed + 1
+        self.seed = int(seed)
+        self._build_noise_schedule(self.seed, self.max_steps_noise)
+
+    def get_params_positive(self):
+        lambdas = self.softplus(self._raw_lambdas) + 1e-8   # (M,)
+        kappas  = self.softplus(self._raw_kappas)  + 1e-12  # (M,)
+        return lambdas, kappas
+
+    def memory_kernel_discrete(self, num_steps):
+        """
+        Returns K[n] = sum_i kappa_i exp(-lambda_i * n*dt)
+        shape: (num_steps,)
+        """
+        lambdas, kappas = self.get_params_positive()
+        n = torch.arange(num_steps, device=DEVICE, dtype=PRECISION)
+        t = n * self.dt
+        K = torch.zeros_like(t)
+        for i in range(self.n_modes):
+            K = K + kappas[i] * torch.exp(-lambdas[i] * t)
+        return K
+
+    def _force_from_potential(self, q_wrapped):
+        """
+        Robustly try common interfaces:
+          - potential(q) -> force
+          - potential(q) -> (E, force)
+        Adjust here if your Tabulated API differs.
+        """
+        out = self.potential(q_wrapped)
+        if isinstance(out, tuple) or isinstance(out, list):
+            # guess: (energy, force)
+            F = out[-1]
         else:
-            self.v_list[:,:,-1] = torch.zeros_like(v, device=v.device).view(-1,1)
-            self.v_list = torch.roll(self.v_list, 1, dims=2)
-            self.w_list[:,:,-1] = torch.zeros_like(v, device=v.device).view(-1,1)
-            self.w_list = torch.roll(self.w_list, 1, dims=2)
-            
-        
+            F = out
+        return F
 
-    def forward(self, v, T, dt, mass, t):
-        # Construct the memory and update velocity and noise history
-        self.construct_memory(T, mass, dt)
-        self.get_v_and_sample_w(v, dt)
+    def _temperature(self, v):
+        # T = 2K/(dof*kB), K = 0.5 sum m v^2
+        K = 0.5 * (self.mass * (v ** 2)).sum()
+        dof = 3.0 * float(self.N)
+        T = 2.0 * K / (dof * self.kB)
+        return T
 
+    def forward(self, t, y):
+        """
+        y shape: ((2 + M) * N, 3)
+          y[:N]         = v
+          y[N:2N]       = q
+          y[2N:]        = s flattened as (M*N, 3)
+        returns dy/dt with same shape
+        """
+        N = self.N
+        M = self.n_modes
 
-        friction = -torch.nn.functional.conv1d(self.v_list[:,:,-self.filter_length:], self.memory_kernel.flip(2))
-        random = torch.nn.functional.conv1d(self.w_list[:,:,-self.filter_length:], self.h.flip(2).detach())
-        delta_v_langevin = friction.view(v.shape) + random.view(v.shape)
-        
-        if len(self.w_history) == (self.filter_length*2):
-            self.w_history.pop(0)
-        self.w_history.append(random.clone().detach().cpu().numpy().flatten())
-        
-        return delta_v_langevin
+        v = y[:N, :]
+        q = y[N:2 * N, :]
+        s_flat = y[2 * N:, :]              # (M*N, 3)
+        s = s_flat.view(M, N, 3)           # (M, N, 3)
+        s_sum = s.sum(dim=0)               # (N, 3)
 
-    
-    def verify_filter_convolution(self):
-        data = np.array(self.w_history)
-        print(data.shape)
-        RACF = []
-        td = self.filter_length+1
-        t0_list = range(0, len(data)-td, 10)
+        # wrap for PBC before force
+        q_wrapped = wrap_positions(q, self.box_diag)
 
-        for t0 in t0_list:
-            racf = (data[t0:t0+td]*data[t0]).mean(1)
-            RACF.append(racf)
+        # forces
+        F = self._force_from_potential(q_wrapped)
 
-        RACF = np.mean(RACF, axis=0)
+        # dv/dt and dq/dt
+        dv = (F - s_sum) / self.mass
+        dq = v
 
-        plt.plot(self.h.clone().detach().cpu().flatten(), 'bo--')
-        plt.title("Filter")
-        plt.show()
-        plt.plot(self.memory_kernel.clone().detach().cpu().flatten(), 'bo--')
-        plt.title("Memory Kernel")
-        plt.show()
-        plt.plot(self.theoretical_RACF.clone().detach().cpu().flatten(), 'bo--')
-        plt.plot(RACF, 'ro--')
-        plt.title("Theoretical RACF")
-        plt.show()
+        # map time to step index (deterministic under your euler time-grid)
+        # idx = round(t/dt)
+        idx = torch.round(t / self.dt).to(torch.long)
+        idx = torch.clamp(idx, 0, self.max_steps_noise - 1)
 
-#%% GLE based simulation
-Thermostat_GLE = GLE_TS(gamma_uniform=0.001, filter_length=1000).to(device)
+        eps = self._noise_eps[idx, :, :, :]   # (N, 3, M)
 
-func= SDE(potential_GT, Thermostat=Thermostat_GLE, Temp_target=300, timestep=dt, TIMEFACTOR=TIMEFACTOR, mass=mass, non_integrand_mask=None, saver=False)
-func.force_mode=True
-q, cell, v = system.pos[0], system.box[0], system.vel[0]
-y0 = torch.concatenate((v*0,q))
-f0 = func(0., y0)
+        lambdas, kappas = self.get_params_positive()  # (M,), (M,)
 
-print("Filter: ", Thermostat_GLE.h)
-print("Memory kernel: ", Thermostat_GLE.memory_kernel)
-print("Mean gamma: ", Thermostat_GLE.memory_kernel.sum().item())
-print("Relaxation time : ", Thermostat_GLE.memory_kernel.sum().item() / Thermostat_GLE.memory_kernel.flatten()[0].item())
-Thermostat_GLE.verify_filter_convolution()
+        # reshape params for broadcasting
+        lambdas_b = lambdas.view(M, 1, 1)
+        kappas_b  = kappas.view(M, 1, 1)
 
-#%%
+        # noise amplitude from FDT
+        # sigma_i = sqrt(2 kB T kappa_i lambda_i)
+        sigma = torch.sqrt(2.0 * self.kB * self.temp_target * kappas * lambdas).view(M, 1, 1)
+
+        # ds/dt with Euler-consistent noise injection:
+        # s_{n+1} = s_n + dt*(-lambda s + kappa v) + sigma*sqrt(dt)*eps
+        # => ds/dt = (-lambda s + kappa v) + sigma*eps/sqrt(dt)
+        eps_perm = eps.permute(2, 0, 1).contiguous()  # (M, N, 3)
+        ds = (-lambdas_b * s + kappas_b * v.view(1, N, 3)) + sigma * eps_perm / np.sqrt(self.dt)
+
+        # optional logging (DO NOT use during training; recompute in adjoint would spam logs)
+        if self.log_temperature:
+            with torch.no_grad():
+                self.Temperature_log.append(self._temperature(v).detach().cpu().item())
+
+        dy = torch.cat(
+            (
+                dv,
+                dq,
+                ds.view(M * N, 3),
+            ),
+            dim=0,
+        )
+        return dy
+
+# Instantiate Markovian GLE dynamics
+N_MODES = 8  # you can tune (e.g., 4, 8, 16)
+func_gle = ExpKernelMarkovianGLE(
+    potential=potential_gt,
+    cell=cell,
+    mass=MASS,
+    temp_target=300.0,
+    kB=BOLTZMAN,
+    dt=DT_PHYS,
+    n_modes=N_MODES,
+    seed=0,
+    max_steps_noise=30000,
+    log_temperature=False,   # IMPORTANT: keep False during training
+).to(DEVICE)
+
+# Initial state for Markovian GLE: add auxiliary s_i = 0
+s0 = torch.zeros((N_MODES * N_ATOMS, 3), dtype=PRECISION, device=DEVICE)
+y0_gle = torch.cat((v, q, s0), dim=0)
+
+# Quick print of initial kernel
+K0 = func_gle.memory_kernel_discrete(2000).detach().cpu()
+plt.plot(K0, "r")
+plt.xlabel("Time Steps")
+plt.ylabel("Memory Kernel K[n]")
+plt.show()
+
+# Single evaluation run (no differentiation)
 T = 3000
-t = (torch.tensor(np.arange(0, dt/TIMEFACTOR*T, dt/TIMEFACTOR))).to(device)
-y0 = torch.concatenate((v,q))
+t_eval = torch.tensor(np.arange(0, DT_PHYS * T, DT_PHYS), dtype=PRECISION, device=DEVICE)
 
 with torch.no_grad():
-    y_GLE= odeint_adjoint(func, y0, t, method="euler")
+    func_gle.log_temperature = True
+    func_gle.Temperature_log = []
+    y_GLE_full = odeint_adjoint(func_gle, y0_gle, t_eval, method="euler")
+    func_gle.log_temperature = False
 
-y0 = y_GLE[-1]
-plt.plot(func.Temperature_log[-T:], 'r')
+# slice out v and q for post-processing
+v_GLE = y_GLE_full[:, :N_ATOMS, :]
+q_GLE = y_GLE_full[:, N_ATOMS:2 * N_ATOMS, :]
+
+plt.plot(func_gle.Temperature_log, "r")
+plt.xlabel("Time Steps")
+plt.ylabel("Temperature (K)")
 plt.show()
-print(np.mean(func.Temperature_log[800:]))
-#%%
-Thermostat_GLE.verify_filter_convolution()
 
-#%%
-r_GLE, RDF_GLE = RDF(y_GLE[-1000::10,Natom:])
-MSD_GLE = MSD(y_GLE[:,Natom:])
-VACF_GLE = VACF(y_GLE[:,:Natom])
+print("Mean Temperature (after 800 steps): ", np.mean(func_gle.Temperature_log[800:]))
 
+r_GLE, RDF_GLE = RDF_computer(q_GLE[-1000::10, :, :])
+MSD_GLE = MSD_computer(q_GLE[:, :, :])
+VACF_GLE = VACF_computer(v_GLE[:, :, :])
 
-plt.plot(r_vanilla.cpu(), RDF_vanilla.cpu(), 'k')
-plt.plot(r_GLE.cpu(), RDF_GLE.cpu(), 'r')
+plt.plot(r_Langevin.cpu(), RDF_Langevin.cpu(), "k", label="Langevin")
+plt.plot(r_GLE.cpu(), RDF_GLE.cpu(), "r", label="Markovian GLE (ExpKernel)")
+plt.xlabel("Distance (Å)")
+plt.ylabel("RDF")
+plt.legend()
 plt.show()
-plt.plot(MSD_vanilla.cpu(), 'k')
-plt.plot(MSD_GLE.cpu(), 'r')
-plt.show()
-plt.plot(VACF_vanilla.cpu(), 'k')
-plt.plot(VACF_GLE.cpu(), 'r')
-plt.show()
-#%%
-#%%
-#%%
-#%%
-#%% Dynamics optimization
-VACF = VACF_computer(1000)
-VACF.ensemble_average = True; VACF.normalize=True
-VACF_AA = VACF(torch.tensor(V).to(device))
 
-r_AA, RDF_AA = RDF(torch.tensor(X[-1000::10,]).to(device))
+plt.plot(MSD_Langevin.cpu(), "k", label="Langevin")
+plt.plot(MSD_GLE.cpu(), "r", label="Markovian GLE (ExpKernel)")
+plt.xlabel("Time Steps")
+plt.ylabel("MSD (Å²)")
+plt.legend()
+plt.show()
 
-#VACF_AA[50:] *= 1.5
-#VACF_AA[50:] *= 1.5
-print(VACF_AA.shape)
+plt.plot(VACF_Langevin.cpu(), "k", label="Langevin")
+plt.plot(VACF_GLE.cpu(), "r", label="Markovian GLE (ExpKernel)")
+plt.xlabel("Time Steps")
+plt.ylabel("VACF")
+plt.legend()
+plt.show()
+
+# =============================================================================
+# 3) Run Differentiable Training (VACF matching) with option A
+#    - IMPORTANT changes vs your code:
+#        * NO mode switching
+#        * NO flipping v_list/w_list
+#        * NO RNG inside forward (noise is fixed schedule)
+#        * NO logging side effects during training
+# =============================================================================
+
+# %% 3.1 Pre-process (Reference System: All-Atom)
+r_AA, RDF_AA = RDF_computer(torch.tensor(X[-1000::10], dtype=PRECISION, device=DEVICE))
+VACF_AA = VACF_computer(torch.tensor(V, dtype=PRECISION, device=DEVICE))
+
+print("RDF Shape: ", RDF_AA.shape)
+print("VACF Shape: ", VACF_AA.shape)
+
+plt.plot(RDF_AA.cpu())
+plt.xlabel("Distance (Å)")
+plt.ylabel("RDF")
+plt.show()
+
 plt.plot(VACF_AA.cpu())
-#torch.save(VACF_AA, "VACF_AA.pth")
-#VACF_AA = torch.load("VACF_AA.pth")
-#%%Dynamics optimization
+plt.xlabel("Time Steps")
+plt.ylabel("VACF")
+plt.show()
 
-optimizer = torch.optim.SGD(func.parameters(), lr=1e-4, weight_decay = 1e-6)
-#optimizer = torch.optim.RMSprop(func.parameters(), lr=0.001, weight_decay = 1e-6)
-#optimizer = torch.optim.SGD(func.parameters(), lr=1e-4)
-#%%
-VACF = VACF_computer(1000)
+# %% 3.2 Training Loop
+optimizer = torch.optim.SGD(func_gle.parameters(), lr=1e-4, weight_decay=1e-5)
+
+output_dir = f"Result/{MOLECULE}/"
+optimization_plots_dir = output_dir + "optimization_plots/"
+final_plot_dir = output_dir + "final_plot/"
+model_dict_dir = output_dir + "model_dict/"
+
+os.makedirs(optimization_plots_dir, exist_ok=True)
+os.makedirs(final_plot_dir, exist_ok=True)
+os.makedirs(model_dict_dir, exist_ok=True)
+
+# Start training from last evaluation final state (or reset to y0_gle if you prefer)
+y0_train = y_GLE_full[-1].detach()
 
 for iter in range(300):
-    if iter == 100:
-        optimizer = torch.optim.Adam(func.parameters(), lr=1e-4, weight_decay = 1e-6)
-    elif iter == 200:
-        optimizer = torch.optim.Adam(func.parameters(), lr=1e-5, weight_decay = 1e-6)
 
-    T = 1
-    t = (torch.tensor(np.arange(0, dt/TIMEFACTOR*T, dt/TIMEFACTOR))).to(device)
+    # small no-grad warmup to move state forward without backprop-through-everything
+    T_warm = 1
+    t_warm = torch.tensor(np.arange(0, DT_PHYS * T_warm, DT_PHYS), dtype=PRECISION, device=DEVICE)
     with torch.no_grad():
-        y_curr= odeint_adjoint(func, y0, t, method="euler")
-    y0 = y_curr[-1].detach()
+        y_warm = odeint_adjoint(func_gle, y0_train, t_warm, method="euler")
+    y0_train = y_warm[-1].detach()
 
+    # differentiable rollout for VACF
+    T_roll = VACF_computer.td_max + 10
+    t_roll = torch.tensor(np.arange(0, DT_PHYS * T_roll, DT_PHYS), dtype=PRECISION, device=DEVICE)
 
-    for minibatch in range(1):
-        T = VACF.td_max+10
-        t = (torch.tensor(np.arange(0, dt/TIMEFACTOR*T, dt/TIMEFACTOR))).to(device)
-        y_curr= odeint_adjoint(func, y0, t, method="euler")
-        y0 = y_curr[-1].detach()
+    # IMPORTANT: no logging during training
+    func_gle.log_temperature = False
 
-        # Post processing
-        VACF.ensemble_average = True; VACF.normalize=True
-        VACF_curr = VACF(y_curr[:,:Natom])
+    y_curr = odeint_adjoint(func_gle, y0_train, t_roll, method="euler")
 
+    v_curr = y_curr[:, :N_ATOMS, :]
+    q_curr = y_curr[:, N_ATOMS:2 * N_ATOMS, :]
 
-        VACF_difference = VACF_curr - VACF_AA
-        VACF_sum_difference = VACF_curr.sum() - VACF_AA.sum()
-        #Effective_gamma = Thermostat_GLE.h.sum()
-        loss = VACF_difference.pow(2).sum() #+ Thermostat_GLE.h.abs().sum()*0.2# + torch.relu(Effective_gamma-0.5)
+    VACF_computer.ensemble_average = True
+    VACF_computer.normalize = True
+    VACF_curr = VACF_computer(v_curr)
 
-        optimizer.zero_grad()
-        Thermostat_GLE.mode = "forward"
-        loss.backward(retain_graph=True)
-        #Thermostat_GLE.mode = "backward"
-        #torch.nn.utils.clip_grad_norm_(func.parameters(), max_norm=1.0)
-        func.Thermostat.v_list[:,:,-1000:] = func.Thermostat.v_list[:,:,-1000:].flip(2)
-        func.Thermostat.w_list[:,:,-1000:] = func.Thermostat.w_list[:,:,-1000:].flip(2)
+    VACF_difference = VACF_curr - VACF_AA
+    loss = VACF_difference.pow(2).sum()
 
-
+    optimizer.zero_grad()
+    loss.backward()
     optimizer.step()
 
+    # advance starting point for next iter
+    y0_train = y_curr[-1].detach()
 
-    print(iter, loss.item(), Thermostat_GLE.memory_kernel.clone().detach().cpu().flatten().sum())
-    print("Consistency", torch.equal(y_curr[-2, :Natom], func.Thermostat.v_list[:,:,-1].view(-1,3)))
+    # logging / diagnostics
+    lambdas, kappas = func_gle.get_params_positive()
+    Ksum = func_gle.memory_kernel_discrete(2000).detach().sum().cpu().item()
 
+    print(iter, loss.item(), "Ksum(2000)=", Ksum)
+    print("lambdas:", lambdas.detach().cpu().numpy())
+    print("kappas :", kappas.detach().cpu().numpy())
+
+    # Save numerical values
+    torch.save(VACF_curr.detach().cpu(), f"{optimization_plots_dir}VACF_curr_iter_{iter}.pt")
+    torch.save(VACF_AA.detach().cpu(), f"{optimization_plots_dir}VACF_AA_iter_{iter}.pt")
+
+    torch.save(lambdas.detach().cpu(), f"{optimization_plots_dir}lambdas_iter_{iter}.pt")
+    torch.save(kappas.detach().cpu(), f"{optimization_plots_dir}kappas_iter_{iter}.pt")
+
+    K_plot = func_gle.memory_kernel_discrete(2000).detach().cpu()
+    torch.save(K_plot, f"{optimization_plots_dir}memory_kernel_iter_{iter}.pt")
+
+    # plots
     plt.figure(figsize=(10, 8))
-    plt.subplot(4, 1, 1)
-    plt.plot(VACF_curr.detach().cpu().numpy(), 'r')
-    plt.plot(VACF_AA.detach().cpu().numpy(), 'k--')
 
-    plt.subplot(4, 1, 2)
-    filter = Thermostat_GLE.h.clone().detach().cpu().flatten()
-    plt.plot(filter, 'r')
+    plt.subplot(3, 1, 1)
+    plt.plot(VACF_curr.detach().cpu().numpy(), "r")
+    plt.plot(VACF_AA.detach().cpu().numpy(), "k--")
+    plt.ylabel("VACF")
 
-    plt.subplot(4, 1, 3)
-    filter_gradient = Thermostat_GLE.h.grad.clone().detach().cpu().flatten()
-    plt.plot(filter_gradient, 'g--')
-    
-    plt.subplot(4, 1, 4)
-    plt.plot(Thermostat_GLE.memory_kernel.clone().detach().cpu().flatten(), 'r')
+    plt.subplot(3, 1, 2)
+    plt.plot(K_plot.numpy(), "r")
+    plt.ylabel("K[n]")
 
-    plt.savefig(f'SPCE/figure_iter_{iter}.png')
+    plt.subplot(3, 1, 3)
+    plt.plot(lambdas.detach().cpu().numpy(), "bo--", label="lambdas")
+    plt.plot(kappas.detach().cpu().numpy(), "ro--", label="kappas")
+    plt.legend()
+    plt.xlabel("Mode index")
+
+    plt.tight_layout()
+    plt.savefig(f"{optimization_plots_dir}figure_iter_{iter}.png")
     plt.show()
 
     # save state dict
-    state_dict = func.state_dict()
-    torch.save(state_dict, 'model_state_dict.pth')
+    state_dict = func_gle.state_dict()
+    torch.save(state_dict, f"{model_dict_dir}model_state_dict.pth")
 
-import pickle
-plot_dict = {"VACF_GLE" : VACF_curr.detach().cpu().numpy(), "VACF_AA" : VACF_AA.detach().cpu().numpy(), "filter" : filter.numpy(), "filter_gradient" : filter_gradient.numpy(), "memory_kernel" : Thermostat_GLE.memory_kernel.clone().detach().cpu().flatten().numpy()}
-with open('SPCE/plot_dict.pkl', 'wb') as f:
-    pickle.dump(plot_dict, f)
+# final save
+torch.save(func_gle.state_dict(), f"{model_dict_dir}model_state_dict_iter_final.pth")
 
-with open('SPCE/plot_dict.pkl', 'rb') as f:
-    plot_dict = pickle.load(f)
-#%%
+# =============================================================================
+# 4) Reproduce Results (optional)
+# =============================================================================
+# model_path = f"{model_dict_dir}model_state_dict_iter_final.pth"
+# func_gle.load_state_dict(torch.load(model_path, map_location=DEVICE))
+# func_gle.eval()
+# print("Model successfully loaded!")
 
-
-T = 10000
-t = (torch.tensor(np.arange(0, dt/TIMEFACTOR*T, dt/TIMEFACTOR))).to(device)
-
-with torch.no_grad():
-    y_curr= odeint_adjoint(func, y0, t, method="euler")
-
-y0 = y_curr[-1].detach()
-
-VACF_curr = VACF(y_curr[:,:Natom])
-plt.plot(VACF_curr.detach().cpu().numpy(), 'r')
-plt.plot(VACF_AA.detach().cpu().numpy(), 'k--')
-
-write_xyz_dump("/oden/jjeong/SPCE.xyz", [7]*Natom, atom_types_map, y_curr[:,Natom:,:], cell)
-
-
-#%%
-#%%
-VACF_curr = VACF(y_curr[:VACF.td_max,:Natom])
-#%%
-
-y0 = y_curr[-1].detach()
-
-
-
-
-
-
-
-
-#%%
-path_to_saved_dict = 'model_state_dict.pth'
-if os.path.exists(path_to_saved_dict):
-    func.load_state_dict(torch.load(path_to_saved_dict))
-
-#%%
-figure_directory = "/oden/jjeong/figure"
-os.makedirs(figure_directory, exist_ok=True)
-
-
-# %%
+# Example: run a fresh evaluation with fixed noise schedule
+# func_gle.resample_noise(seed=0)
+# func_gle.log_temperature = True
+# func_gle.Temperature_log = []
+# with torch.no_grad():
+#     y_test = odeint_adjoint(func_gle, y0_gle, t_eval, method="euler")
+# func_gle.log_temperature = False
