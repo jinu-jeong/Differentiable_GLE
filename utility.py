@@ -1,3 +1,5 @@
+from collections import deque
+
 import numpy as np
 import torch
 
@@ -15,9 +17,6 @@ def gaussian_smearing(centered, sigma):
 class SDE(torch.nn.Module):
     noise_type = 'general'
     sde_type = 'ito'
-    
-    
-
 
     def __init__(self, potential, Thermostat, Temp_target, timestep, TIMEFACTOR, mass, non_integrand_mask, saver=False, append_dict=None):
         super().__init__()
@@ -45,70 +44,72 @@ class SDE(torch.nn.Module):
         else:
             self.append_dict = None
 
-        self.Temperature_log = []
+        self.Temperature_log = deque(maxlen=1_000_000)
             
 
     def forward(self, t, state):
+        # IMPORTANT: this RHS is NOT a pure dy/dt. It bakes a velocity-Verlet
+        # half-step of the position update into `dqdt` so that when the outer
+        # integrator performs an Euler step (y <- y + dt * rhs), the overall
+        # update matches standard velocity-Verlet:
+        #     q_new = q0 + v0*dt + 0.5*a0*dt^2
+        #     v_new = v0 + 0.5*(a0 + a1)*dt + thermostat*dt
+        # This means `odeint`/`odeint_adjoint` MUST be called with
+        # method="euler". Any other integrator (rk4, midpoint, ...) will
+        # silently produce wrong dynamics because dt is embedded in the RHS.
+        # Pure Euler (Euler-Maruyama) without VV is unstable for typical MD
+        # timesteps, which is why the VV half-step is kept here. If you want
+        # to decouple integration from the RHS, write a custom VV/BAOAB
+        # FixedGridODESolver subclass and return a plain (a, v) here.
         original_state_shape = state.shape
-        
-        state = state.view(-1,3)
-        Natom = len(state)//2
-        
+
+        state = state.view(-1, 3)
+        Natom = len(state) // 2
+
         with torch.set_grad_enabled(True):
-            #3N
-            v0 = state[:Natom].requires_grad_(True)            
+            v0 = state[:Natom].requires_grad_(True)
             q0 = state[Natom:].requires_grad_(True)
-            
-            
-            ######## Thermostat
-            
-            if self.Thermostat!=None:
-                dv_dt_thermostat = self.Thermostat(v0, self.Temp_target, self.dt, self.mass, t = t)
+
+            # Thermostat contribution to dv/dt
+            if self.Thermostat is not None:
+                dv_dt_thermostat = self.Thermostat(v0, self.Temp_target, self.dt, self.mass, t=t)
             else:
                 dv_dt_thermostat = 0
-            
-            ########
-                        
-            ######### first VV
-            if self.force_mode==False:
+
+            # first force evaluation at q0
+            if self.force_mode == False:
                 u0 = self.potential(q0).sum()
                 f0 = -compute_grad(inputs=q0, output=u0)
             else:
                 f0 = self.potential(q0)
-            a0 = f0/self.mass
-            
-            if self.saver==True:
+            a0 = f0 / self.mass
+
+            if self.saver == True:
                 self.pos_saver.append(q0.clone().detach().cpu())
                 self.force_saver.append(f0.clone().detach().cpu())
-            
-            if self.append_dict!=None:
-                write_xyz_dump(self.append_dict["file_name"], self.append_dict["atom_types"], self.append_dict["atom_types_map"], q0.unsqueeze(0), self.potential.cell, mode = "a")
-            
-            dqdt = v0 + 0.5*a0*self.dt
-            q1 = q0 + dqdt *self.dt
-            
 
-            
-            ######### second VV
-            if self.force_mode==False:
+            if self.append_dict is not None:
+                write_xyz_dump(self.append_dict["file_name"], self.append_dict["atom_types"], self.append_dict["atom_types_map"], q0.unsqueeze(0), self.potential.cell, mode="a")
+
+            dqdt = v0 + 0.5 * a0 * self.dt
+            q1 = q0 + dqdt * self.dt
+
+            # second force evaluation at q1 (VV)
+            if self.force_mode == False:
                 u1 = self.potential(q1).sum()
                 f1 = -compute_grad(inputs=q1, output=u1)
             else:
                 f1 = self.potential(q1)
+            a1 = f1 / self.mass
+            dvdt = 0.5 * (a0 + a1) + dv_dt_thermostat
 
-            a1 = f1/self.mass
-            dvdt = 0.5*(a0 + a1) + dv_dt_thermostat
-            
-            
-            ######### Integrate only selected DOFs
-            
-        if self.non_integrand_mask!=None:
+        if self.non_integrand_mask is not None:
+            dvdt = dvdt.clone()
+            dqdt = dqdt.clone()
             dvdt[self.non_integrand_mask] = 0
             dqdt[self.non_integrand_mask] = 0
-            
-            
-        
-        KE = (self.mass*(v0.pow(2))).sum()/2
+
+        KE = (self.mass * (v0.pow(2))).sum() / 2
         T = kinetic_to_temp(KE, Natom)
         self.Temperature_log.append(T.item())
 
@@ -124,6 +125,162 @@ class SDE(torch.nn.Module):
 
 """
 #%%
+
+
+class SDE_AuxVariable(torch.nn.Module):
+    """SDE for GLE with auxiliary variables using torchsde integration.
+
+    State: [v, q, s₀, s₁, ..., s_{K-1}] where K is the number of aux modes.
+    White noise is fed to both velocity (Langevin-like) and aux variables.
+
+    Unlike the discrete-filter approach, this uses torchsde.odeint/odeint_adjoint
+    for proper stochastic integration.
+    """
+    noise_type = 'general'
+    sde_type = 'ito'
+
+    def __init__(self, potential, thermostat, temp_target, timestep, TIMEFACTOR,
+                 mass, n_aux_modes, force_mode=False, saver=False):
+        """
+        Parameters
+        ----------
+        potential : nn.Module
+            Force/energy potential
+        thermostat : GLE_TS_AuxVariable
+            Auxiliary variable thermostat
+        temp_target : float
+            Target temperature
+        timestep : float
+            Time step in fs
+        TIMEFACTOR : float
+            Conversion factor (fs to simulation time units)
+        mass : torch.Tensor
+            Atomic masses (N_atoms, 1)
+        n_aux_modes : int
+            Number of auxiliary variable modes (K)
+        force_mode : bool
+            If True, potential returns force; if False, returns energy
+        saver : bool
+            If True, save positions and forces
+        """
+        super().__init__()
+        self.potential = potential
+        self.thermostat = thermostat
+        self.temp_target = temp_target
+        self.dt = timestep / TIMEFACTOR
+        self.mass = mass
+        self.n_aux_modes = n_aux_modes
+        self.force_mode = force_mode
+        self.saver = saver
+
+        if saver:
+            self.pos_saver = []
+            self.force_saver = []
+
+        self.Temperature_log = deque(maxlen=1_000_000)
+
+    def f(self, t, state):
+        """Drift term (deterministic dynamics).
+
+        Parameters
+        ----------
+        t : float
+            Time
+        state : torch.Tensor
+            Shape (N_flattened,) where flattened = [v, q, s₀, ..., s_{K-1}]
+            All flattened to 1D of shape (N_atoms * 3 * (2 + K),)
+
+        Returns
+        -------
+        drift : torch.Tensor
+            Same shape as state
+        """
+        N_atoms = self.mass.shape[0]
+        state_3d = state.view(N_atoms, 3, 2 + self.n_aux_modes)
+
+        v = state_3d[..., 0]  # (N_atoms, 3)
+        q = state_3d[..., 1]  # (N_atoms, 3)
+        s_list = [state_3d[..., 2 + k] for k in range(self.n_aux_modes)]
+
+        with torch.enable_grad():
+            q.requires_grad_(True)
+            if self.force_mode:
+                f = self.potential(q)
+            else:
+                u = self.potential(q).sum()
+                f = -compute_grad(inputs=q, output=u)
+
+        a = f / self.mass  # (N_atoms, 3)
+
+        # Friction from aux variables
+        s_dict = {k: s_list[k] for k in range(self.n_aux_modes)}
+        friction, ds_dict, _ = self.thermostat(v, s_dict, self.temp_target, self.dt, self.mass, t)
+
+        # Dynamics
+        dv_dt = a + friction / self.mass
+        dq_dt = v
+        ds_dt_list = [ds_dict[k] for k in range(self.n_aux_modes)]
+
+        # Log temperature (no grad)
+        KE = 0.5 * (self.mass * v.detach().pow(2)).sum()
+        T = kinetic_to_temp(KE, N_atoms)
+        self.Temperature_log.append(T.item())
+
+        # Concatenate and flatten
+        drift_3d = torch.stack([dv_dt, dq_dt] + ds_dt_list, dim=2)
+        return drift_3d.view(-1)
+
+    def g(self, t, state):
+        """Diffusion term (noise coefficient).
+
+        Parameters
+        ----------
+        t : float
+            Time
+        state : torch.Tensor
+            Shape (N_flattened,)
+
+        Returns
+        -------
+        diffusion : torch.Tensor
+            Shape (N_flattened, noise_dim) for torchsde
+        """
+        N_atoms = self.mass.shape[0]
+        state_3d = state.view(N_atoms, 3, 2 + self.n_aux_modes)
+        v = state_3d[..., 0]
+        s_list = [state_3d[..., 2 + k] for k in range(self.n_aux_modes)]
+
+        # Noise for velocity (Langevin)
+        # Amplitude: √(2 k_B T γ / m) per component
+        # Use total friction γ = Σ c_k λ_k as rough estimate
+        gamma_total = torch.sum(self.thermostat.c_coeffs * self.thermostat.lambdas)
+        v_noise_amp = torch.sqrt(
+            2.0 * gamma_total * BOLTZMAN * self.temp_target / self.mass
+        )
+
+        # Noise for aux variables
+        s_noise_amps = []
+        for k in range(self.n_aux_modes):
+            lambda_k = self.thermostat.lambdas[k]
+            c_k = self.thermostat.c_coeffs[k]
+            noise_amp = torch.sqrt(
+                2.0 * lambda_k * c_k * BOLTZMAN * self.temp_target / self.mass
+            )
+            s_noise_amps.append(noise_amp)
+
+        # Build diffusion matrix: diagonal (one Brownian per state component)
+        # Shape: (N_atoms*3*(2+K), N_atoms*3*(2+K))
+        noise_amps = [v_noise_amp, torch.zeros_like(v)] + [
+            amp for amp in s_noise_amps
+        ]
+        noise_3d = torch.stack(noise_amps, dim=2)  # (N_atoms, 3, 2+K)
+        diffusion_diag = noise_3d.view(-1)
+
+        # Return diagonal matrix (torchsde will interpret this as diffusion)
+        N_flat = N_atoms * 3 * (2 + self.n_aux_modes)
+        diffusion = torch.diag(diffusion_diag)
+
+        return diffusion
 
 
 #%%

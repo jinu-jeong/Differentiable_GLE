@@ -1,0 +1,27 @@
+# DiffGLE demo dependencies (see README for dataset download)
+# Python >= 3.9 recommended
+#
+# main.py uses device = "cuda:0", so install the CUDA build of PyTorch.
+# The line below tells pip to fetch GPU wheels from PyTorch's index (CUDA 12.4).
+# Pick a different cu* tag if needed: https://pytorch.org/get-started/locally/
+#
+# Verify after install:
+#   python -c "import torch; print(torch.__version__, torch.cuda.is_available(), torch.version.cuda)"
+#
+# CPU-only alternative (comment out --extra-index-url and use this instead):
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   pip install -r requirements.txt
+#
+# Dataset (not a pip package): download and extract H2O/ and CO2/ into the project root:
+#   https://uofi.box.com/s/gruyslzav75ibbg0qjlh877f37le78c4
+
+--extra-index-url https://download.pytorch.org/whl/cu124
+
+numpy>=1.20
+matplotlib>=3.5
+scipy>=1.7
+torch
+torchdiffeq>=0.2.0
+torchmd>=1.0.0
+jupyter>=1.0
+ipykernel>=6.0

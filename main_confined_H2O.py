@@ -11,32 +11,7 @@ from torchmd.integrator import maxwell_boltzmann
 from torchmd.systems import System
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-
-WEIGHT_DECAY = 1e-6
-# (start_iter, optimizer_name, learning_rate)
-OPTIMIZER_SCHEDULE = {
-    "CO2": [
-        (0, "SGD", 1e-3),
-    ],
-    "H2O": [
-        (0, "Adam", 3e-4),
-        (100, "Adam", 1e-4),
-        (200, "Adam", 1e-5),
-    ],
-}
-
-
-def build_optimizer(func, name, lr):
-    return getattr(torch.optim, name)(func.parameters(), lr=lr, weight_decay=WEIGHT_DECAY)
-
-
-def optimizer_config(system_name, iter):
-    schedule = OPTIMIZER_SCHEDULE[system_name]
-    name, lr = schedule[0][1], schedule[0][2]
-    for milestone, opt_name, opt_lr in schedule:
-        if iter >= milestone:
-            name, lr = opt_name, opt_lr
-    return name, lr
+DEFAULT_SYSTEM = "Confined_H2O"
 
 
 class GLE_TS(torch.nn.Module):
@@ -55,6 +30,8 @@ class GLE_TS(torch.nn.Module):
         self.theoretical_RACF = torch.nn.functional.conv1d(h_padded, self.h)
         self.memory_kernel = self.theoretical_RACF * mass[0, 0].item() * dt / (self.BOLTZMAN * T)
         self.memory_kernel_trapezoidal = self.memory_kernel.clone()
+        self.memory_kernel_trapezoidal[..., 0] *= 0.5
+        self.memory_kernel_trapezoidal[..., -1] *= 0.5
 
     def get_v_and_sample_w(self, v, dt):
         if self.v_list is None:
@@ -70,7 +47,7 @@ class GLE_TS(torch.nn.Module):
     def forward(self, v, T, dt, mass, t):
         self.construct_memory(T, mass, dt)
         self.get_v_and_sample_w(v, dt)
-        friction = -torch.nn.functional.conv1d(self.v_list[:, :, -self.filter_length:], self.memory_kernel.flip(2))
+        friction = -torch.nn.functional.conv1d(self.v_list[:, :, -self.filter_length:], self.memory_kernel_trapezoidal.flip(2))
         random = torch.nn.functional.conv1d(self.w_list[:, :, -self.filter_length:], self.h.flip(2).detach())
         delta_v_langevin = friction.view(v.shape) + random.view(v.shape)
         if len(self.w_history) == self.filter_length * 2:
@@ -112,10 +89,16 @@ class GLE_TS(torch.nn.Module):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="DiffGLE bulk fluid demo (CO2 / H2O)")
-    parser.add_argument("--system", "-s", choices=["CO2", "H2O"], default="H2O", help="Target system")
+    parser = argparse.ArgumentParser(description="DiffGLE confined water demo with transfer learning")
+    parser.add_argument("--system", default=DEFAULT_SYSTEM, help="Data directory name")
     parser.add_argument("--device", default="cuda:0", help="Torch device")
     parser.add_argument("--iterations", "-n", type=int, default=300, help="Optimization iterations")
+    parser.add_argument(
+        "--pretrained",
+        default=os.path.join(PROJECT_ROOT, "Result", "H2O", "model_dict", "model_state_dict.pth"),
+        help="Pretrained bulk H2O GLE kernel",
+    )
+    parser.add_argument("--no-pretrained", action="store_true", help="Skip transfer learning init")
     parser.add_argument("--output-dir", default=None, help="Output directory (default: ./Result/<system>)")
     parser.add_argument("--no-show", action="store_true", help="Save plots instead of displaying them")
     return parser.parse_args()
@@ -133,6 +116,19 @@ def make_show_plot(args, output_dir):
     return show_plot
 
 
+def load_atom_types(z_path):
+    z_dummy = np.load(z_path)
+    z = []
+    for item in z_dummy:
+        if item == "C":
+            z.append(5)
+        elif item == "O":
+            z.append(7)
+        else:
+            raise ValueError(f"Unknown atom type: {item}")
+    return torch.tensor(z)
+
+
 def run(args):
     os.chdir(PROJECT_ROOT)
 
@@ -140,17 +136,14 @@ def run(args):
     output_dir = args.output_dir or os.path.join(PROJECT_ROOT, "Result", system_name)
     show_plot = make_show_plot(args, output_dir)
 
-    if system_name == "CO2":
-        mass_value = 44.1
-        filter_length = 200
-        pre_equil_T = 200
-    else:
-        mass_value = 18.0
-        filter_length = 1000
-        pre_equil_T = 1
+    mass_value = 18.01528
+    filter_length = 1000
+    pre_equil_T = 2000
 
     device = args.device
+    z = load_atom_types(f"./{system_name}/AA/z.npy")
     X = torch.tensor(np.load(f"./{system_name}/AA/pos_COM.npy"))
+    X[:, :, 2] -= X[:, :, 2].min()
     V = torch.tensor(np.load(f"./{system_name}/AA/vel_COM.npy"))
 
     Natom = X.shape[1]
@@ -160,61 +153,94 @@ def run(args):
     dt = 1
 
     md_system = System(Natom, nreplicas=1, precision=precision, device=device)
-    md_system.set_positions(X[-1][:, :, None] % 40.0)
-    md_system.set_box(np.array([40.0, 40.0, 40.0]))
-    md_system.set_velocities(maxwell_boltzmann(mass, T=300, replicas=1))
+    md_system.set_positions(X[-1][:, :, None])
+    md_system.set_box(np.array([25.174493, 29.778001, 112]))
+    md_system.set_velocities(maxwell_boltzmann(mass, T=100, replicas=1))
 
-    from force import Langevin_TS, Tabulated
-    from utility import MSD_computer, RDF_computer, SDE, VACF_computer, atom_types_map, write_xyz_dump
+    from force import Langevin_TS, Tabulated_specific
+    from utility import MSD_computer, SDE, VACF_computer, atom_types_map, density_computer, write_xyz_dump
 
-    Tabulated_data = np.loadtxt(f"./{system_name}/CG/CG_CG.pot", skiprows=3)
-    Tabulated_data = Tabulated_data[~np.isnan(Tabulated_data[:, -1])]
-    potential_GT = Tabulated(md_system.box[0], Tabulated_data).to(device)
+    Tabulated_data_FF = np.loadtxt(f"./{system_name}/CG/CG1_CG1.pot", skiprows=3)
+    Tabulated_data_FF = Tabulated_data_FF[~np.isnan(Tabulated_data_FF[:, -1])]
+    Tabulated_data_WF = np.loadtxt(f"./{system_name}/CG/CG1_GR1.pot", skiprows=3)
+    Tabulated_data_WF = Tabulated_data_WF[~np.isnan(Tabulated_data_WF[:, -1])]
 
-    Thermostat_LE = Langevin_TS(gamma=0.05).to(device)
-    func = SDE(potential_GT, Thermostat=Thermostat_LE, Temp_target=300, timestep=dt, TIMEFACTOR=TIMEFACTOR, mass=mass, non_integrand_mask=None, saver=False)
+    potential_GT = Tabulated_specific(
+        md_system.box[0], z, [Tabulated_data_FF, Tabulated_data_WF], [[7, 7], [7, 5]]
+    ).to(device)
+
+    Thermostat_LE = Langevin_TS(gamma=0.5).to(device)
+    func = SDE(
+        potential_GT,
+        Thermostat=Thermostat_LE,
+        Temp_target=300,
+        timestep=dt,
+        TIMEFACTOR=TIMEFACTOR,
+        mass=mass,
+        non_integrand_mask=(z == 5),
+        saver=False,
+    )
     func.force_mode = True
 
-    q, cell, v = md_system.pos[0], md_system.box[0], md_system.vel[0]
+    q, cell, v = md_system.pos[0], md_system.box[0], md_system.vel[0] * 0
     y0 = torch.concatenate((v, q))
     func(0., y0)
 
-    T = 2000
+    T = 1000
     y0 = torch.concatenate((v, q))
     t = torch.tensor(np.arange(0, dt / TIMEFACTOR * T, dt / TIMEFACTOR)).to(device)
 
-    RDF = RDF_computer(cell, device)
-    MSD = MSD_computer(1000)
-    VACF = VACF_computer(1000)
+    Density = density_computer(cell, z_mask=(z == 7), axis=2, device=device, dr=0.5)
+    MSD = MSD_computer(500)
+    VACF = VACF_computer(500)
 
     with torch.no_grad():
         y_vanilla = odeint_adjoint(func, y0, t, method="euler")
+        y0 = y_vanilla[-1].detach()
 
+    z_GT, density_GT = Density(X[::10].to(device))
+    z_vanilla, density_vanilla = Density(y_vanilla[500::10, Natom:])
     plt.figure()
-    plt.plot(func.Temperature_log, 'k')
-    show_plot("temperature_langevin.png")
+    plt.plot(z_vanilla.detach().cpu(), density_vanilla.detach().cpu(), 'r')
+    plt.plot(z_GT.detach().cpu(), density_GT.detach().cpu(), 'k--')
+    show_plot("density_vanilla.png")
     plt.close()
 
-    r_vanilla, RDF_vanilla = RDF(y_vanilla[::10, Natom:])
-    MSD_vanilla = MSD(y_vanilla[:, Natom:])
-    VACF_vanilla = VACF(y_vanilla[:, :Natom])
-
+    MSD_GT = MSD(X.to(device)[:, z == 7])
+    MSD_vanilla = MSD(y_vanilla[5000:, Natom:][:, z == 7])
     plt.figure()
-    plt.plot(r_vanilla.cpu(), RDF_vanilla.cpu(), 'k')
-    show_plot("rdf_vanilla.png")
-    plt.close()
-    plt.figure()
-    plt.plot(MSD_vanilla.cpu(), 'k')
+    plt.plot(MSD_vanilla.detach().cpu(), 'r')
+    plt.plot(MSD_GT.detach().cpu(), 'k--')
     show_plot("msd_vanilla.png")
     plt.close()
+
+    VACF_GT = VACF(V.to(device)[:, z == 7])
+    VACF_vanilla = VACF(y_vanilla[5000:, :Natom][:, z == 7])
     plt.figure()
-    plt.plot(VACF_vanilla.cpu(), 'k')
+    plt.plot(VACF_vanilla.detach().cpu(), 'r')
+    plt.plot(VACF_GT.detach().cpu(), 'k--')
     show_plot("vacf_vanilla.png")
     plt.close()
 
     Thermostat_GLE = GLE_TS(gamma_uniform=0.001, filter_length=filter_length).to(device)
-    func = SDE(potential_GT, Thermostat=Thermostat_GLE, Temp_target=300, timestep=dt, TIMEFACTOR=TIMEFACTOR, mass=mass, non_integrand_mask=None, saver=False)
+    func = SDE(
+        potential_GT,
+        Thermostat=Thermostat_GLE,
+        Temp_target=300,
+        timestep=dt,
+        TIMEFACTOR=TIMEFACTOR,
+        mass=mass,
+        non_integrand_mask=(z == 5),
+        saver=False,
+    )
     func.force_mode = True
+
+    if not args.no_pretrained and os.path.exists(args.pretrained):
+        func.load_state_dict(torch.load(args.pretrained, map_location=device), strict=False)
+        print("Transfer learning from", args.pretrained)
+    elif not args.no_pretrained:
+        print("Pretrained weights not found at", args.pretrained)
+
     q, cell, v = md_system.pos[0], md_system.box[0], md_system.vel[0]
     y0 = torch.concatenate((v * 0, q))
     func(0., y0)
@@ -227,14 +253,14 @@ def run(args):
         y_GLE = odeint_adjoint(func, y0, t, method="euler")
     y0 = y_GLE[-1]
 
-    r_GLE, RDF_GLE = RDF(y_GLE[-1000::10, Natom:])
+    z_GLE, density_GLE = Density(y_GLE[::10, Natom:])
     MSD_GLE = MSD(y_GLE[:, Natom:])
     VACF_GLE = VACF(y_GLE[:, :Natom])
 
     plt.figure()
-    plt.plot(r_vanilla.cpu(), RDF_vanilla.cpu(), 'k')
-    plt.plot(r_GLE.cpu(), RDF_GLE.cpu(), 'r')
-    show_plot("rdf_compare.png")
+    plt.plot(z_GT.cpu(), density_GT.cpu(), 'k')
+    plt.plot(z_GLE.cpu(), density_GLE.cpu(), 'r')
+    show_plot("density_compare.png")
     plt.close()
     plt.figure()
     plt.plot(MSD_vanilla.cpu(), 'k')
@@ -250,16 +276,11 @@ def run(args):
     VACF = VACF_computer(1000)
     VACF.ensemble_average = True
     VACF.normalize = True
-    VACF_AA = VACF(torch.tensor(V).to(device))
+    VACF_AA = VACF(torch.tensor(V).to(device)[:, z == 7])
 
-    opt_cfg = optimizer_config(system_name, 0)
-    optimizer = build_optimizer(func, *opt_cfg)
+    optimizer = torch.optim.Adam(func.parameters(), lr=1e-5, weight_decay=1e-6)
 
     for iter in range(args.iterations):
-        new_cfg = optimizer_config(system_name, iter)
-        if new_cfg != opt_cfg:
-            opt_cfg = new_cfg
-            optimizer = build_optimizer(func, *opt_cfg)
 
         T = pre_equil_T
         t = torch.tensor(np.arange(0, dt / TIMEFACTOR * T, dt / TIMEFACTOR)).to(device)
@@ -267,17 +288,14 @@ def run(args):
             y_curr = odeint_adjoint(func, y0, t, method="euler")
         y0 = y_curr[-1].detach()
 
-        T = VACF.td_max + 10
+        T = max(Thermostat_GLE.filter_length, VACF.td_max) + 10
         t = torch.tensor(np.arange(0, dt / TIMEFACTOR * T, dt / TIMEFACTOR)).to(device)
         y_curr = odeint_adjoint(func, y0, t, method="euler")
-        if system_name == "CO2":
-            y0 = y_curr[Thermostat_GLE.filter_length + 1].detach()
-        else:
-            y0 = y_curr[-1].detach()
+        y0 = y_curr[Thermostat_GLE.filter_length + 1].detach()
 
         VACF.ensemble_average = True
         VACF.normalize = True
-        VACF_curr = VACF(y_curr[:, :Natom])
+        VACF_curr = VACF(y_curr[:, :Natom][:, z == 7])
         loss = (VACF_curr - VACF_AA).pow(2).sum()
 
         optimizer.zero_grad()
@@ -301,11 +319,14 @@ def run(args):
         show_plot(f"optimization_iter_{iter:03d}.png")
         plt.close()
 
-    model_path = os.path.join(output_dir, "model_state_dict.pth")
     os.makedirs(output_dir, exist_ok=True)
+    model_path = os.path.join(output_dir, "model_state_dict.pth")
     torch.save(func.state_dict(), model_path)
 
     plot_dict = {
+        "r": z_GT.cpu().numpy(),
+        "RDF_AA": density_GT.cpu().numpy(),
+        "RDF_CG": density_GLE.cpu().numpy(),
         "VACF_GLE": VACF_curr.detach().cpu().numpy(),
         "VACF_AA": VACF_AA.detach().cpu().numpy(),
         "filter": filter_vals.numpy(),
@@ -320,15 +341,23 @@ def run(args):
     with torch.no_grad():
         y_curr = odeint_adjoint(func, y0, t, method="euler")
 
-    VACF_curr = VACF(y_curr[:, :Natom])
+    VACF_curr = VACF(y_curr[:, :Natom][:, z == 7])
     plt.figure()
     plt.plot(VACF_curr.detach().cpu().numpy(), 'r')
     plt.plot(VACF_AA.detach().cpu().numpy(), 'k--')
     show_plot("vacf_production.png")
     plt.close()
 
+    z_GLE, density_GLE = Density(y_curr[:, Natom:])
+    plt.figure()
+    plt.plot(z_GT.cpu(), density_GT.cpu(), 'k')
+    plt.plot(z_GLE.cpu(), density_GLE.cpu(), 'r')
+    plt.xlim([0, 80])
+    show_plot("density_production.png")
+    plt.close()
+
     xyz_path = os.path.join(output_dir, f"{system_name}.xyz")
-    write_xyz_dump(xyz_path, [7] * Natom, atom_types_map, y_curr[:, Natom:, :], cell)
+    write_xyz_dump(xyz_path, z, atom_types_map, y_curr[:, Natom:, :], cell)
     print(f"Saved model to {model_path}")
     print(f"Saved trajectory to {xyz_path}")
 
