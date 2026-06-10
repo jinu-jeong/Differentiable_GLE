@@ -31,5 +31,5 @@ pip install torch torchdiffeq
 
 
 📜 License & Copyright
-© 2025 Jinu Jeong, Ishan Nadkarni, Narayana R. Aluru. All rights reserved.
+© 2026 Jinu Jeong and Ishan Nadkarni. All rights reserved.
 This project is licensed under the MIT License. See the LICENSE file for details.
