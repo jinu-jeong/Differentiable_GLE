@@ -6,7 +6,7 @@ This repository contains the implementation of **DiffGLE**, a differentiable coa
 The code in this repository corresponds to our paper:
 
 📄 **[DiffGLE: Differentiable Coarse-Grained Dynamics using Generalized Langevin Equation](https://arxiv.org/abs/2410.08424)**  
-👨‍🔬 *Authors: Jinu Jeong, Ishan Nadkarni, Narayana R. Aluru*  
+👨‍🔬 *Authors: Jinu Jeong, Ishan Nadkarni 
 
 > 🔬 **This repository contains the demo code for the APS March Meeting 2025.**
 
@@ -21,7 +21,7 @@ The code in this repository corresponds to our paper:
 - Ensure you have the following dependencies installed:
 
 ```bash
-pip install torch torchdiffeq
+pip install -r requirements.txt
 ```
 
 
