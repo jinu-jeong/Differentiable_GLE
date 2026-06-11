@@ -100,7 +100,8 @@ def parse_args():
     )
     parser.add_argument("--no-pretrained", action="store_true", help="Skip transfer learning init")
     parser.add_argument("--output-dir", default=None, help="Output directory (default: ./Result/<system>)")
-    parser.add_argument("--no-show", action="store_true", help="Save plots instead of displaying them")
+    parser.set_defaults(no_show=True)
+    parser.add_argument("--show", dest="no_show", action="store_false", help="Display plots interactively")
     return parser.parse_args()
 
 
@@ -148,7 +149,7 @@ def run(args):
     md_system = System(Natom, nreplicas=1, precision=precision, device=device)
     md_system.set_positions(torch.tensor(pos0, device=device, dtype=precision)[:, :, None])
     md_system.set_box(box)
-    md_system.set_velocities(torch.tensor(vel0, device=device, dtype=precision))
+    md_system.set_velocities(torch.tensor(vel0, device=device, dtype=precision)[None])
 
     from force import Langevin_TS, Tabulated_specific
     from utility import MSD_computer, SDE, VACF_computer, atom_types_map, density_computer, write_xyz_dump

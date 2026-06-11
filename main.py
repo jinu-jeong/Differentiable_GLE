@@ -117,7 +117,8 @@ def parse_args():
     parser.add_argument("--device", default="cuda:0", help="Torch device")
     parser.add_argument("--iterations", "-n", type=int, default=300, help="Optimization iterations")
     parser.add_argument("--output-dir", default=None, help="Output directory (default: ./Result/<system>)")
-    parser.add_argument("--no-show", action="store_true", help="Save plots instead of displaying them")
+    parser.set_defaults(no_show=True)
+    parser.add_argument("--show", dest="no_show", action="store_false", help="Display plots interactively")
     return parser.parse_args()
 
 
@@ -168,7 +169,7 @@ def run(args):
     md_system = System(Natom, nreplicas=1, precision=precision, device=device)
     md_system.set_positions(torch.tensor(pos0, device=device, dtype=precision)[:, :, None])
     md_system.set_box(box)
-    md_system.set_velocities(torch.tensor(vel0, device=device, dtype=precision))
+    md_system.set_velocities(torch.tensor(vel0, device=device, dtype=precision)[None])
 
     from force import Langevin_TS, Tabulated
     from utility import MSD_computer, RDF_computer, SDE, VACF_computer, atom_types_map, write_xyz_dump
