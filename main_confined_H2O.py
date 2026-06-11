@@ -7,10 +7,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from torchdiffeq import odeint_adjoint
-from torchmd.integrator import maxwell_boltzmann
 from torchmd.systems import System
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(PROJECT_ROOT, "Data")
 DEFAULT_SYSTEM = "Confined_H2O"
 
 
@@ -95,7 +95,7 @@ def parse_args():
     parser.add_argument("--iterations", "-n", type=int, default=300, help="Optimization iterations")
     parser.add_argument(
         "--pretrained",
-        default=os.path.join(PROJECT_ROOT, "Result", "H2O", "model_dict", "model_state_dict.pth"),
+        default=os.path.join(PROJECT_ROOT, "Result", "H2O", "model_state_dict.pth"),
         help="Pretrained bulk H2O GLE kernel",
     )
     parser.add_argument("--no-pretrained", action="store_true", help="Skip transfer learning init")
@@ -116,19 +116,6 @@ def make_show_plot(args, output_dir):
     return show_plot
 
 
-def load_atom_types(z_path):
-    z_dummy = np.load(z_path)
-    z = []
-    for item in z_dummy:
-        if item == "C":
-            z.append(5)
-        elif item == "O":
-            z.append(7)
-        else:
-            raise ValueError(f"Unknown atom type: {item}")
-    return torch.tensor(z)
-
-
 def run(args):
     os.chdir(PROJECT_ROOT)
 
@@ -141,28 +128,34 @@ def run(args):
     pre_equil_T = 2000
 
     device = args.device
-    z = load_atom_types(f"./{system_name}/AA/z.npy")
-    X = torch.tensor(np.load(f"./{system_name}/AA/pos_COM.npy"))
-    X[:, :, 2] -= X[:, :, 2].min()
-    V = torch.tensor(np.load(f"./{system_name}/AA/vel_COM.npy"))
+    data_dir = os.path.join(DATA_DIR, system_name)
+    z = torch.tensor(np.load(os.path.join(data_dir, "z.npy")), device=device)
+    pos0 = np.load(os.path.join(data_dir, "pos0.npy"))
+    vel0 = np.load(os.path.join(data_dir, "vel0.npy"))
+    box = np.load(os.path.join(data_dir, "box.npy"))
+    z_aa = np.load(os.path.join(data_dir, "z_aa.npy"))
+    density_aa = np.load(os.path.join(data_dir, "density_aa.npy"))
+    msd_aa = np.load(os.path.join(data_dir, "msd_aa.npy"))
+    vacf_aa = np.load(os.path.join(data_dir, "vacf_aa.npy"))
+    vacf_aa_gt = np.load(os.path.join(data_dir, "vacf_aa_gt.npy"))
 
-    Natom = X.shape[1]
+    Natom = pos0.shape[0]
     precision = torch.float
     mass = torch.full((Natom, 1), mass_value).to(device)
     TIMEFACTOR = 48.88821
     dt = 1
 
     md_system = System(Natom, nreplicas=1, precision=precision, device=device)
-    md_system.set_positions(X[-1][:, :, None])
-    md_system.set_box(np.array([25.174493, 29.778001, 112]))
-    md_system.set_velocities(maxwell_boltzmann(mass, T=100, replicas=1))
+    md_system.set_positions(torch.tensor(pos0, device=device, dtype=precision)[:, :, None])
+    md_system.set_box(box)
+    md_system.set_velocities(torch.tensor(vel0, device=device, dtype=precision))
 
     from force import Langevin_TS, Tabulated_specific
     from utility import MSD_computer, SDE, VACF_computer, atom_types_map, density_computer, write_xyz_dump
 
-    Tabulated_data_FF = np.loadtxt(f"./{system_name}/CG/CG1_CG1.pot", skiprows=3)
+    Tabulated_data_FF = np.loadtxt(os.path.join(data_dir, "CG", "CG1_CG1.pot"), skiprows=3)
     Tabulated_data_FF = Tabulated_data_FF[~np.isnan(Tabulated_data_FF[:, -1])]
-    Tabulated_data_WF = np.loadtxt(f"./{system_name}/CG/CG1_GR1.pot", skiprows=3)
+    Tabulated_data_WF = np.loadtxt(os.path.join(data_dir, "CG", "CG1_GR1.pot"), skiprows=3)
     Tabulated_data_WF = Tabulated_data_WF[~np.isnan(Tabulated_data_WF[:, -1])]
 
     potential_GT = Tabulated_specific(
@@ -198,7 +191,8 @@ def run(args):
         y_vanilla = odeint_adjoint(func, y0, t, method="euler")
         y0 = y_vanilla[-1].detach()
 
-    z_GT, density_GT = Density(X[::10].to(device))
+    z_GT = torch.tensor(z_aa, device=device)
+    density_GT = torch.tensor(density_aa, device=device)
     z_vanilla, density_vanilla = Density(y_vanilla[500::10, Natom:])
     plt.figure()
     plt.plot(z_vanilla.detach().cpu(), density_vanilla.detach().cpu(), 'r')
@@ -206,7 +200,7 @@ def run(args):
     show_plot("density_vanilla.png")
     plt.close()
 
-    MSD_GT = MSD(X.to(device)[:, z == 7])
+    MSD_GT = torch.tensor(msd_aa, device=device)
     MSD_vanilla = MSD(y_vanilla[5000:, Natom:][:, z == 7])
     plt.figure()
     plt.plot(MSD_vanilla.detach().cpu(), 'r')
@@ -214,7 +208,7 @@ def run(args):
     show_plot("msd_vanilla.png")
     plt.close()
 
-    VACF_GT = VACF(V.to(device)[:, z == 7])
+    VACF_GT = torch.tensor(vacf_aa_gt, device=device)
     VACF_vanilla = VACF(y_vanilla[5000:, :Natom][:, z == 7])
     plt.figure()
     plt.plot(VACF_vanilla.detach().cpu(), 'r')
@@ -276,7 +270,7 @@ def run(args):
     VACF = VACF_computer(1000)
     VACF.ensemble_average = True
     VACF.normalize = True
-    VACF_AA = VACF(torch.tensor(V).to(device)[:, z == 7])
+    VACF_AA = torch.tensor(vacf_aa, device=device)
 
     optimizer = torch.optim.Adam(func.parameters(), lr=1e-5, weight_decay=1e-6)
 

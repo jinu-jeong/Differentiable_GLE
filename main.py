@@ -7,10 +7,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from torchdiffeq import odeint_adjoint
-from torchmd.integrator import maxwell_boltzmann
 from torchmd.systems import System
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(PROJECT_ROOT, "Data")
 
 WEIGHT_DECAY = 1e-6
 # (start_iter, optimizer_name, learning_rate)
@@ -150,24 +150,30 @@ def run(args):
         pre_equil_T = 1
 
     device = args.device
-    X = torch.tensor(np.load(f"./{system_name}/AA/pos_COM.npy"))
-    V = torch.tensor(np.load(f"./{system_name}/AA/vel_COM.npy"))
+    data_dir = os.path.join(DATA_DIR, system_name)
+    pos0 = np.load(os.path.join(data_dir, "pos0.npy"))
+    vel0 = np.load(os.path.join(data_dir, "vel0.npy"))
+    box = np.load(os.path.join(data_dir, "box.npy"))
+    r_aa = np.load(os.path.join(data_dir, "r_aa.npy"))
+    rdf_aa = np.load(os.path.join(data_dir, "rdf_aa.npy"))
+    msd_aa = np.load(os.path.join(data_dir, "msd_aa.npy"))
+    vacf_aa = np.load(os.path.join(data_dir, "vacf_aa.npy"))
 
-    Natom = X.shape[1]
+    Natom = pos0.shape[0]
     precision = torch.float
     mass = torch.full((Natom, 1), mass_value).to(device)
     TIMEFACTOR = 48.88821
     dt = 1
 
     md_system = System(Natom, nreplicas=1, precision=precision, device=device)
-    md_system.set_positions(X[-1][:, :, None] % 40.0)
-    md_system.set_box(np.array([40.0, 40.0, 40.0]))
-    md_system.set_velocities(maxwell_boltzmann(mass, T=300, replicas=1))
+    md_system.set_positions(torch.tensor(pos0, device=device, dtype=precision)[:, :, None])
+    md_system.set_box(box)
+    md_system.set_velocities(torch.tensor(vel0, device=device, dtype=precision))
 
     from force import Langevin_TS, Tabulated
     from utility import MSD_computer, RDF_computer, SDE, VACF_computer, atom_types_map, write_xyz_dump
 
-    Tabulated_data = np.loadtxt(f"./{system_name}/CG/CG_CG.pot", skiprows=3)
+    Tabulated_data = np.loadtxt(os.path.join(data_dir, "CG", "CG_CG.pot"), skiprows=3)
     Tabulated_data = Tabulated_data[~np.isnan(Tabulated_data[:, -1])]
     potential_GT = Tabulated(md_system.box[0], Tabulated_data).to(device)
 
@@ -250,7 +256,7 @@ def run(args):
     VACF = VACF_computer(1000)
     VACF.ensemble_average = True
     VACF.normalize = True
-    VACF_AA = VACF(torch.tensor(V).to(device))
+    VACF_AA = torch.tensor(vacf_aa, device=device)
 
     opt_cfg = optimizer_config(system_name, 0)
     optimizer = build_optimizer(func, *opt_cfg)
