@@ -1,0 +1,13 @@
+{
+  "source_run": "H2O original from-scratch adjoint optimization",
+  "system": "H2O",
+  "filter_param": "free",
+  "iterations": 300,
+  "optimizer": "Adam",
+  "learning_rate_schedule": "3e-4 at iter 0, 1e-4 at iter 100, 1e-5 at iter 200",
+  "training_vacf_gradient_mode": "window_detached",
+  "vacf_loss_window": "full saved training VACF",
+  "conservative_potential": "original packaged H2O CG potential",
+  "production_50kx5_vacf_rmse": 0.02180906943976879,
+  "production_50kx5_rdf_rmse": 0.03628759976459161
+}

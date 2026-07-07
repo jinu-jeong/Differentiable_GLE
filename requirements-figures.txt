@@ -1,0 +1,5 @@
+# Lightweight dependencies for reproducing the manuscript figures from
+# bundled compact arrays in paper_data/.
+
+numpy>=1.24
+matplotlib>=3.7

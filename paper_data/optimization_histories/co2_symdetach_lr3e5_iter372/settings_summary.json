@@ -1,0 +1,48 @@
+{
+  "paper_candidate": "CO2 symmetric-detach selected checkpoint iter372",
+  "lineage": [
+    "0-299: from-scratch CO2 free-filter optimization",
+    "372: selected symmetric-detach continuation checkpoint"
+  ],
+  "selected_checkpoint": "checkpoint_iter_372.pth",
+  "selected_iteration": 372,
+  "optimizer": "SGD",
+  "learning_rate_continuation": 3e-05,
+  "ode_backprop_mode": "adjoint",
+  "training_vacf_gradient_mode_continuation": "symmetric_detach",
+  "training_vacf_origins": 20,
+  "gradient_clip_norm": 500,
+  "filter_param": "free",
+  "filter_length": 200,
+  "vacf_loss_window": "0:500 during original; selected checkpoint evaluated on full 1000 VACF samples",
+  "production_validation": {
+    "run": "CO2 selected-checkpoint production validation",
+    "warmup_steps": 3000,
+    "production_steps": 10000,
+    "replicas": 1,
+    "vacf_total_origins": 901,
+    "rdf_rmse": 0.010163665608915655,
+    "rdf_mae": 0.006525132750061625,
+    "vacf_rmse": 0.006980901584029198,
+    "vacf_mae": 0.004526457283645868
+  },
+  "caveat": "Only iteration_372 was preserved from the continuation run, so the compact history shows the full original simple-start trajectory plus the selected improved endpoint rather than dense continuation intermediates.",
+  "metric_history_note": "Panel-d continuation trend from iterations 300-372 uses retained logged values at 300, 341, and 372 with linear interpolation for visual continuity; dense continuation iteration arrays were not retained.",
+  "logged_continuation_metric_points": [
+    {
+      "iteration": 300,
+      "loss": 0.166454643,
+      "vacf_rmse": 0.0129017308
+    },
+    {
+      "iteration": 341,
+      "loss": 0.1010988876,
+      "vacf_rmse": 0.0100547941
+    },
+    {
+      "iteration": 372,
+      "loss": 0.0694847852,
+      "vacf_rmse": 0.0083357533
+    }
+  ]
+}

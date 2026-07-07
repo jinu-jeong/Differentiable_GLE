@@ -1,106 +1,96 @@
-# DiffGLE: Differentiable Coarse-Grained Dynamics
+# DiffGLE
 
-## Overview
+This repository contains the code and compact result data for DiffGLE, a differentiable generalized Langevin equation (GLE) approach for correcting coarse-grained molecular dynamics. The conservative coarse-grained force is kept fixed, while a trainable colored-noise filter defines the fluctuating force and the friction memory through the fluctuation-dissipation theorem.
 
-This repository contains the implementation of **DiffGLE**, a differentiable coarse-grained dynamics framework based on the **Generalized Langevin Equation (GLE)**. The methodology leverages **Automatic Differentiation (AD)** and the **adjoint-state method** to accurately parameterize non-Markovian GLE models for coarse-grained fluids.
+This `v2` branch is the reproducibility branch for the revised manuscript. It is organized to regenerate the plotted results without storing large raw all-atom trajectories or personal run logs.
 
-The code in this repository corresponds to our paper:
+## What Is Included
 
-📄 **[DiffGLE: Differentiable Coarse-Grained Dynamics using Generalized Langevin Equation](https://arxiv.org/abs/2410.08424)**  
-👨‍🔬 *Authors: Jinu Jeong*, Ishan Nadkarni
+- `main.py`, `main_confined_H2O.py`, `force.py`, `utility.py`, `preprocess.py`:
+  differentiable CG/GLE simulation code for the molecular-fluid examples.
+- `Data/`:
+  compact preprocessed inputs for the H2O, CO2, and confined-H2O demos, including COM initial conditions, reference observables, boxes, and fixed tabulated CG potentials.
+- `paper_data/`:
+  compact saved optimization histories, production observables, gradient-audit arrays, and supplementary source data used to generate the manuscript figures.
+- `scripts/`:
+  figure-reproduction scripts for the main results, gradient-mechanics diagnostics, FDT closure, and CG pair potentials.
 
-> 🔬 **This repository contains the demo code for the APS March Meeting 2025.**
+Generated output is written to `figures/generated/` or `Result/`; both are intentionally ignored by git.
 
-## Features
+## Installation
 
-- **End-to-End Differentiable Simulation**: Differentiable coarse-grained molecular dynamics (CGMD) framework.
-- **GLE Parameterization**: Colored-noise ansatz for memory kernels.
-- **Adjoint-State Optimization**: Efficient optimization of CG models with memory kernel and colored thermal noise.
-- **Validation on Complex Fluids**: Demonstrated on H₂O, CO₂, and confined H₂O.
+For reproducing the paper figures from the bundled compact arrays:
 
-## Requirements
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-figures.txt
+```
 
-Install dependencies (Python 3.10+ recommended):
+For rerunning the differentiable MD demos, install the full dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## Quick start
+Install the PyTorch build appropriate for your machine before the full run if you need a specific CUDA version. The original molecular-fluid training was run on GPU, but the figure scripts are CPU-only.
 
-Preprocessed inputs and CG potentials should be under `./Data/`.
+## Reproduce Manuscript Figures
 
-```bash
-python main.py -s H2O
-python main.py -s CO2
-python main_confined_H2O.py
-```
-
-Run bulk H₂O before confined H₂O (transfer learning uses `Result/H2O/model_state_dict.pth`). Outputs go to `./Result/<system>/`.
-
-**Additional options:** `--device` (default `cuda:0`), `--iterations` / `-n` (default `300`), `--output-dir`, and `--show` (interactive plots; off by default). For confined H₂O: `--pretrained`, `--no-pretrained`.
-
-## Advanced: download data and preprocessing
-
-Use this only if you want to regenerate inputs from the full all-atom trajectories (large files, not required for the default demo).
-
-### 1. Download the dataset
-
-Download from [uofi.box.com](https://uofi.box.com/s/gruyslzav75ibbg0qjlh877f37le78c4) and unpack under `./Data/`:
-
-```
-Data/
-├── CO2/
-│   ├── AA/pos_COM.npy, vel_COM.npy
-│   └── CG/CG_CG.pot
-├── H2O/
-│   ├── AA/pos_COM.npy, vel_COM.npy
-│   └── CG/CG_CG.pot
-└── Confined_H2O/
-    ├── AA/pos_COM.npy, vel_COM.npy, z.npy
-    └── CG/CG1_CG1.pot, CG1_GR1.pot
-```
-
-### 2. Preprocess all-atom trajectories
-
-Run once to compute reference observables and initial conditions. Outputs are saved in each `Data/<system>/` folder.
+Regenerate the compact main-results figure:
 
 ```bash
-python preprocess.py                  # all systems (default: cpu)
-python preprocess.py --system H2O     # one system
-python preprocess.py --device cuda:0  # optional GPU (auto-falls back to cpu for large trajectories)
+python scripts/make_paper_figures.py
 ```
 
-**Bulk (`CO2`, `H2O`)** writes: `pos0.npy`, `vel0.npy`, `r_aa.npy`, `rdf_aa.npy`, `msd_aa.npy`, `vacf_aa.npy`, `box.npy`
+Regenerate the gradient-mechanics diagnostic:
 
-**Confined (`Confined_H2O`)** writes: `z.npy`, `pos0.npy`, `vel0.npy`, `z_aa.npy`, `density_aa.npy`, `msd_aa.npy`, `vacf_aa.npy`, `vacf_aa_gt.npy`, `box.npy`
+```bash
+python scripts/plot_gradient_mechanics.py
+```
 
-## Outputs
+Regenerate supplementary FDT and conservative-potential figures:
 
-Results are written to `./Result/<system>/`:
+```bash
+python scripts/plot_fdt_closure.py
+python scripts/plot_pair_potentials.py
+```
 
-- `model_state_dict.pth` — trained GLE kernel
-- `plot_dict.pkl` — optimization diagnostics
-- `optimization_iter_*.png` — per-iteration VACF / filter plots
-- `<system>.xyz` — production trajectory
+The generated files are written under `figures/generated/`.
 
-## Repository structure
+## Rerun Molecular-Fluid Training Demos
 
-| File | Description |
-|------|-------------|
-| `main.py` | Bulk CO₂ / H₂O demo |
-| `main_confined_H2O.py` | Confined H₂O demo with transfer learning |
-| `preprocess.py` | AA trajectory preprocessing |
-| `force.py`, `utility.py`, `integrator.py` | Core simulation and analysis modules |
-| `CO2.py`, `H2O.py` | Legacy single-system scripts (superseded by `main.py`) |
+The compact preprocessed data under `Data/` are sufficient for the default H2O and CO2 demos:
 
-## Additional resources
+```bash
+python main.py --system CO2 --device cuda:0 --iterations 300
+python main.py --system H2O --device cuda:0 --iterations 300
+```
 
-🔍 Other works from our research group: [MultiNano Group](https://github.com/multinanogroup)
+Use `--device cpu` for small smoke tests. CPU training is much slower and is intended only for debugging.
 
-## License & copyright
+Outputs are written to `Result/<system>/`.
 
-© 2026 Jinu Jeong and Ishan Nadkarni. All rights reserved.
+## Data Notes
 
-This project is licensed under the MIT License. See the LICENSE file for details.
+The repository includes compact observables and saved optimization histories, not the large raw atomistic trajectories. For the molecular fluids, the CG mapping is one center-of-mass bead per molecule. The fixed conservative interactions are the tabulated CG-CG pair potentials in `Data/H2O/CG/CG_CG.pot` and `Data/CO2/CG/CG_CG.pot`.
 
+The star-polymer no-force benchmark in `paper_data/optimization_histories/` is stored as compact curves and learned filter/kernel snapshots. It is included for figure reproduction and does not require the exploratory polymer run directories used during development.
+
+## Repository Hygiene
+
+This branch intentionally excludes:
+
+- raw all-atom trajectories,
+- cluster job files,
+- personal logs and notebooks,
+- generated per-iteration PNG dumps,
+- local virtual environments and caches.
+
+## Citation
+
+If you use this code, please cite the DiffGLE manuscript associated with this repository. A formal citation entry will be added when the revised manuscript record is finalized.
+
+## License
+
+This project is distributed under the MIT License. See `LICENSE` for details.
