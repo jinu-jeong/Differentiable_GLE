@@ -94,13 +94,8 @@ Results are written to `./Result/<system>/`:
 | `force.py`, `utility.py`, `integrator.py` | Core simulation and analysis modules |
 | `CO2.py`, `H2O.py` | Legacy single-system scripts (superseded by `main.py`) |
 
-## Additional resources
-
-🔍 Other works from our research group: [MultiNano Group](https://github.com/multinanogroup)
-
 ## License & copyright
 
 © 2026 Jinu Jeong and Ishan Nadkarni. All rights reserved.
 
 This project is licensed under the MIT License. See the LICENSE file for details.
-
