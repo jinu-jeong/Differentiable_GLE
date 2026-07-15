@@ -16,7 +16,7 @@ The code in this repository corresponds to our paper:
 - **End-to-End Differentiable Simulation**: Differentiable coarse-grained molecular dynamics (CGMD) framework.
 - **GLE Parameterization**: Colored-noise ansatz for memory kernels.
 - **Adjoint-State Optimization**: Efficient optimization of CG models with memory kernel and colored thermal noise.
-- **Validation on Complex Fluids**: Demonstrated on H₂O, CO₂, and confined H₂O.
+- **Validation on Complex Fluids**: Demonstrated on H₂O, CO₂, and star polymer
 
 ## Requirements
 
