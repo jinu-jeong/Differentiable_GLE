@@ -151,9 +151,11 @@ The force column from each table is interpolated during simulation and is not tr
 
 The star-polymer benchmark is stored as compact target curves and learned filter/kernel snapshots in `paper_data/optimization_histories/`. It documents the memory-learning result without requiring exploratory polymer run directories.
 
-## Citation
+## Reference
 
-This branch accompanies a revised manuscript currently under review. Please cite the DiffGLE manuscript associated with this repository; the formal citation will be updated when the revised record is available.
+If you use this code or data, please reference:
+
+J. Jeong, I. Nadkarni, and N. R. Aluru, "DiffGLE: Differentiable Coarse-Grained Dynamics using Generalized Langevin Equation," arXiv:2410.08424, 2024. https://doi.org/10.48550/arXiv.2410.08424
 
 ## License
 
