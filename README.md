@@ -4,7 +4,6 @@
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/status-manuscript%20under%20review-orange)](#citation)
 
 <p align="center">
   <img src="docs/assets/diffgle_cover.png" alt="DiffGLE overview" width="850">
