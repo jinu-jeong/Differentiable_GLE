@@ -12,13 +12,12 @@
 
 DiffGLE learns the missing non-Markovian part of coarse-grained dynamics while keeping the conservative coarse-grained force fixed. The fluctuating force is represented by a trainable colored-noise filter, and the friction memory is defined from that filter through the fluctuation-dissipation theorem. This makes the stochastic forcing and dissipation consistent by construction while allowing the dynamics to be optimized directly against time-correlation observables such as the velocity autocorrelation function (VACF).
 
-This `v2` branch is the reproducibility branch for the revised DiffGLE manuscript, which is currently under review. It contains the code and compact processed data needed to reproduce the paper figures for:
+This `v2` branch is the reproducibility branch for the project. It contains the code and compact processed data needed to reproduce the key results for:
 
 - bulk CO2,
 - bulk H2O,
 - a star-polymer no-force memory benchmark.
 
-Raw all-atom trajectories, exploratory cluster runs, personal logs, notebooks, and generated iteration dumps are intentionally excluded.
 
 ## Optimization Example
 
@@ -36,7 +35,7 @@ python scripts/make_readme_gif.py
 
 ## Core Idea
 
-For coarse-grained coordinates \(r\) and velocities \(v\), DiffGLE uses a generalized Langevin dynamics model of the form
+For coarse-grained coordinates and velocities , DiffGLE uses a generalized Langevin dynamics model of the form
 
 ```math
 m_i \dot v_i(t)
@@ -48,7 +47,7 @@ F_i^{C}(r(t))
 R_{i,\theta}(t).
 ```
 
-The conservative force \(F^C\) is fixed. The trainable object is a causal colored-noise filter \(h_\theta\) applied to white noise,
+The conservative force is fixed. The trainable object is a causal colored-noise filter applied to white noise,
 
 ```math
 R_{i,\theta}(t)
@@ -74,14 +73,13 @@ This construction gives an FDT-consistent friction/noise pair for any learned fi
 | `main.py`, `force.py`, `utility.py` | differentiable CG/GLE simulation components for the molecular-fluid examples |
 | `Data/CO2/`, `Data/H2O/` | compact preprocessed COM initial conditions, reference observables, boxes, and fixed tabulated CG pair potentials |
 | `paper_data/` | compact optimization histories, production observables, gradient diagnostics, and supplementary source curves used for the manuscript figures |
-| `scripts/` | figure and README-asset reproduction scripts |
+| `scripts/` | figure scripts |
 | `docs/assets/` | README cover image and CO2 optimization animation |
 
-Generated outputs are written to `figures/generated/` or `Result/`; both are ignored by git.
 
 ## Installation
 
-For reproducing the manuscript figures and README animation from the bundled compact arrays:
+For reproducing the key results from the bundled compact arrays:
 
 ```bash
 python -m venv .venv
@@ -95,7 +93,7 @@ For rerunning the differentiable MD demos, install the full dependencies:
 pip install -r requirements.txt
 ```
 
-Install the PyTorch build appropriate for your machine before full GPU runs if you need a specific CUDA version. The figure scripts are CPU-only; the original molecular-fluid training runs used GPU acceleration.
+Install the PyTorch build appropriate for your machine before full GPU runs if you need a specific CUDA version. 
 
 ## Reproduce Manuscript Figures
 
@@ -134,7 +132,7 @@ See `paper_data/optimization_histories/optimization_history_manifest.md` for the
 
 ## Rerun Bulk-Fluid Training Demos
 
-The compact preprocessed data under `Data/` are sufficient for the default H2O and CO2 differentiable MD demos:
+The compact preprocessed data under `Data/` are sufficient for the default H2O and CO2 differentiable MD runs:
 
 ```bash
 python main.py --system CO2 --device cuda:0 --iterations 300
