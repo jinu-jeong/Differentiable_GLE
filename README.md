@@ -126,11 +126,11 @@ Generated figures are written under `figures/generated/`.
 
 The compact arrays in `paper_data/` are the recommended route for reproducing the plotted manuscript results exactly. The settings are stored next to each saved history.
 
-| system | paper-data folder | setting summary |
+| system | data | setting summary |
 |---|---|---|
-| CO2 | `paper_data/optimization_histories/co2_symdetach_lr3e5_iter372/` | fixed CO2 CG-CG potential, free colored-noise filter, adjoint-assisted optimization, SGD, selected iteration 372 |
-| H2O | `paper_data/optimization_histories/h2o_original_fromscratch/` | fixed H2O CG-CG potential, free colored-noise filter, adjoint-assisted optimization, Adam learning-rate schedule, 300 iterations |
-| star polymer | `paper_data/optimization_histories/star_polymer_noforce_fromscratch_support700/` and `paper_data/optimization_histories/star_polymer_noforce_continuation_support700/` | no conservative force, fixed-noise direct optimization, 64 replicas, 7 particles per replica, long-support free filter |
+| CO2 | [history](paper_data/optimization_histories/co2_symdetach_lr3e5_iter372/) | fixed CO2 CG-CG potential, free colored-noise filter, adjoint-assisted optimization, SGD, selected iteration 372 |
+| H2O | [history](paper_data/optimization_histories/h2o_original_fromscratch/) | fixed H2O CG-CG potential, free colored-noise filter, adjoint-assisted optimization, Adam learning-rate schedule, 300 iterations |
+| star polymer | [from scratch](paper_data/optimization_histories/star_polymer_noforce_fromscratch_support700/), [continuation](paper_data/optimization_histories/star_polymer_noforce_continuation_support700/) | no conservative force, fixed-noise direct optimization, 64 replicas, 7 particles per replica, long-support free filter |
 
 See `paper_data/optimization_histories/optimization_history_manifest.md` for the full hyperparameter and metric summary.
 
