@@ -12,7 +12,7 @@
 
 DiffGLE learns the missing non-Markovian part of coarse-grained dynamics while keeping the conservative coarse-grained force fixed. The fluctuating force is represented by a trainable colored-noise filter, and the friction memory is defined from that filter through the fluctuation-dissipation theorem. This makes the stochastic forcing and dissipation consistent by construction while allowing the dynamics to be optimized directly against time-correlation observables such as the velocity autocorrelation function (VACF).
 
-This `v2` branch is the reproducibility branch for the project. It contains the code and compact processed data needed to reproduce the key results for:
+This package provides the necessary reproducibility scripts for the project. It contains the code and compact processed data needed to reproduce the key results for:
 
 - bulk CO2,
 - bulk H2O,
