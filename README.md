@@ -73,7 +73,7 @@ This construction gives an FDT-consistent friction/noise pair for any learned fi
 | `Data/CO2/`, `Data/H2O/` | compact preprocessed COM initial conditions, reference observables, boxes, and fixed tabulated CG pair potentials |
 | `paper_data/` | compact optimization histories, production observables, gradient diagnostics, and supplementary source curves used for the manuscript figures |
 | `scripts/` | figure and README-asset reproduction scripts |
-| `docs/assets/` | README cover image, methodology graphic, and CO2 optimization animation |
+
 
 
 ## Installation
