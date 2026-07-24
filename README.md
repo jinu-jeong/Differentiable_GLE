@@ -12,11 +12,7 @@
 
 DiffGLE learns the missing non-Markovian part of coarse-grained dynamics while keeping the conservative coarse-grained force fixed. The fluctuating force is represented by a trainable colored-noise filter, and the friction memory is defined from that filter through the fluctuation-dissipation theorem. This makes the stochastic forcing and dissipation consistent by construction while allowing the dynamics to be optimized directly against time-correlation observables such as the velocity autocorrelation function (VACF).
 
-This package provides the necessary reproducibility scripts for the project. It contains the code and compact processed data needed to reproduce the key results for:
-
-- bulk CO2,
-- bulk H2O,
-- a star-polymer no-force memory benchmark.
+This package provides the necessary reproducibility scripts for the project. It contains the code and compact processed data needed to reproduce the key results for CO2, H2O and a free CG star-polymer bead.
 
 
 ## Optimization Example
@@ -154,7 +150,7 @@ For the molecular fluids, the CG mapping is one center-of-mass bead per molecule
 
 The force column from each table is interpolated during simulation and is not trained during DiffGLE optimization.
 
-The star-polymer no-force benchmark is stored as compact target curves and learned filter/kernel snapshots in `paper_data/optimization_histories/`. It documents the memory-learning result without requiring exploratory polymer run directories.
+The star-polymer benchmark is stored as compact target curves and learned filter/kernel snapshots in `paper_data/optimization_histories/`. It documents the memory-learning result without requiring exploratory polymer run directories.
 
 ## Citation
 
