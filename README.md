@@ -35,7 +35,11 @@ python scripts/make_readme_gif.py
 
 ## Core Idea
 
-For coarse-grained coordinates and velocities , DiffGLE uses a generalized Langevin dynamics model of the form
+<p align="center">
+  <img src="docs/assets/methodology.png" alt="DiffGLE differentiable training workflow" width="850">
+</p>
+
+For coarse-grained coordinates \(r\) and velocities \(v\), DiffGLE uses a generalized Langevin dynamics model of the form
 
 ```math
 m_i \dot v_i(t)
@@ -73,8 +77,8 @@ This construction gives an FDT-consistent friction/noise pair for any learned fi
 | `main.py`, `force.py`, `utility.py` | differentiable CG/GLE simulation components for the molecular-fluid examples |
 | `Data/CO2/`, `Data/H2O/` | compact preprocessed COM initial conditions, reference observables, boxes, and fixed tabulated CG pair potentials |
 | `paper_data/` | compact optimization histories, production observables, gradient diagnostics, and supplementary source curves used for the manuscript figures |
-| `scripts/` | figure scripts |
-| `docs/assets/` | README cover image and CO2 optimization animation |
+| `scripts/` | figure and README-asset reproduction scripts |
+| `docs/assets/` | README cover image, methodology graphic, and CO2 optimization animation |
 
 
 ## Installation
