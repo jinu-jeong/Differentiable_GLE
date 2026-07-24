@@ -9,10 +9,8 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(PROJECT_ROOT, "Data")
 
 BULK_SYSTEMS = {"CO2", "H2O"}
-CONFINED_SYSTEMS = {"Confined_H2O"}
 
 BULK_BOX = np.array([40.0, 40.0, 40.0])
-CONFINED_BOX = np.array([25.174493, 29.778001, 112.0])
 
 # Use CPU when a single trajectory array would exceed this share of free GPU memory.
 GPU_MEMORY_FRACTION = 0.35
@@ -33,13 +31,6 @@ def parse_args():
         help="Frame stride for RDF / density (default: 10)",
     )
     return parser.parse_args()
-
-
-def load_atom_types(z_path):
-    z_dummy = np.load(z_path, allow_pickle=True)
-    mapping = {"C": 5, "O": 7}
-    z = np.array([mapping[item] for item in z_dummy], dtype=np.int64)
-    return z
 
 
 def make_cell(box, device):
@@ -112,73 +103,6 @@ def preprocess_bulk(system_name, aa_dir, out_dir, device, rdf_stride):
     print("  saved bulk preprocess: rdf, msd, vacf, pos0, vel0")
 
 
-def preprocess_confined(system_name, aa_dir, out_dir, device, rdf_stride):
-    from utility import MSD_computer, VACF_computer, density_computer
-
-    z = load_atom_types(os.path.join(aa_dir, "z.npy"))
-    z_mask = z == 7
-
-    pos_path = os.path.join(aa_dir, "pos_COM.npy")
-    vel_path = os.path.join(aa_dir, "vel_COM.npy")
-    X_np = np.load(pos_path, mmap_mode="r")
-    V_np = np.load(vel_path, mmap_mode="r")
-
-    z_min = float(X_np[:, :, 2].min())
-
-    def shifted_positions(indexer):
-        chunk = np.asarray(X_np[indexer], dtype=np.float32)
-        chunk[..., 2] -= z_min
-        return chunk
-
-    pos0 = shifted_positions(-1)
-    V_o_np = np.asarray(V_np[:, z_mask], dtype=np.float32)
-
-    oxygen_bytes = X_np.shape[0] * z_mask.sum() * 3 * 4
-    nbytes = oxygen_bytes + V_o_np.nbytes
-    device = pick_device(device, nbytes)
-    cell = make_cell(CONFINED_BOX, device)
-    z_tensor = torch.tensor(z, device=device)
-
-    np.save(os.path.join(out_dir, "z.npy"), z)
-    np.save(os.path.join(out_dir, "pos0.npy"), pos0)
-    np.save(os.path.join(out_dir, "vel0.npy"), np.asarray(V_np[-1]))
-    np.save(os.path.join(out_dir, "box.npy"), CONFINED_BOX)
-
-    Density = density_computer(cell, z_mask=z_tensor == 7, axis=2, device=device, dr=0.5)
-    MSD = MSD_computer(1000)
-    VACF = VACF_computer(1000)
-    VACF.ensemble_average = True
-    VACF.normalize = True
-    VACF_gt = VACF_computer(1000)
-    VACF_gt.ensemble_average = True
-    VACF_gt.normalize = True
-
-    with torch.no_grad():
-        X_rdf = to_tensor(shifted_positions(slice(None, None, rdf_stride)), device)
-        z_aa, density_aa = Density(X_rdf)
-        np.save(os.path.join(out_dir, "z_aa.npy"), z_aa.cpu().numpy())
-        np.save(os.path.join(out_dir, "density_aa.npy"), density_aa.cpu().numpy())
-        del X_rdf, z_aa, density_aa
-
-        X_o_np = np.asarray(X_np[:, z_mask], dtype=np.float32)
-        X_o_np[:, :, 2] -= z_min
-        X_o = to_tensor(X_o_np, device)
-        del X_o_np
-        msd_aa = MSD(X_o)
-        np.save(os.path.join(out_dir, "msd_aa.npy"), msd_aa.cpu().numpy())
-        del X_o, msd_aa
-
-        V_o = to_tensor(V_o_np, device)
-        vacf_aa = VACF(V_o)
-        vacf_aa_gt = VACF_gt(V_o)
-        np.save(os.path.join(out_dir, "vacf_aa.npy"), vacf_aa.cpu().numpy())
-        np.save(os.path.join(out_dir, "vacf_aa_gt.npy"), vacf_aa_gt.cpu().numpy())
-        del V_o, vacf_aa, vacf_aa_gt
-
-    release_memory(device)
-    print("  saved confined preprocess: density, msd, vacf, pos0, vel0, z")
-
-
 def preprocess_system(system_name, device, rdf_stride):
     data_dir = os.path.join(DATA_DIR, system_name)
     aa_dir = os.path.join(data_dir, "AA")
@@ -189,10 +113,8 @@ def preprocess_system(system_name, device, rdf_stride):
     print(f"preprocessing {system_name}...")
     if system_name in BULK_SYSTEMS:
         preprocess_bulk(system_name, aa_dir, data_dir, device, rdf_stride)
-    elif system_name in CONFINED_SYSTEMS:
-        preprocess_confined(system_name, aa_dir, data_dir, device, rdf_stride)
     else:
-        print(f"skip {system_name}: unknown system type (expected bulk or confined)")
+        print(f"skip {system_name}: unknown system type (expected CO2 or H2O)")
 
 
 def main():
