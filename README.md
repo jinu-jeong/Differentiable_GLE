@@ -22,11 +22,6 @@ The animation below is generated from the saved CO2 optimization history bundled
   <img src="docs/assets/co2_diffgle_optimization.gif" alt="CO2 DiffGLE optimization" width="850">
 </p>
 
-Regenerate this README animation with:
-
-```bash
-python scripts/make_readme_gif.py
-```
 
 ## Core Idea
 
