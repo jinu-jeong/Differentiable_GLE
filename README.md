@@ -150,8 +150,4 @@ The star-polymer benchmark is stored as compact target curves and learned filter
 
 If you use this code or data, please reference:
 
-J. Jeong and I. Nadkarni "DiffGLE: Differentiable Coarse-Grained Dynamics using Generalized Langevin Equation," arXiv:2410.08424, 2024. https://doi.org/10.48550/arXiv.2410.08424
-
-## License
-
-This project is distributed under the MIT License. See `LICENSE` for details.
+J. Jeong, I. Nadkarni, and N. R. Aluru, "DiffGLE: Differentiable Coarse-Grained Dynamics using Generalized Langevin Equation," *Europhysics Letters*. https://doi.org/10.1209/0295-5075/ae9c6e
