@@ -1,142 +1,176 @@
 # Differentiable GLE with memory fields
 
-Coarse-grained (CG) molecular dynamics with a **generalized Langevin equation (GLE)** whose memory
-kernel is learned **top-down**, by differentiating the CG simulation so that its dynamics match
-all-atom references.
+**Learning state-dependent memory kernels for coarse-grained molecular dynamics**
 
-This branch (`memory_field`) adds **memory fields**: a memory kernel that depends on a state variable
-of the bead, here the distance $d$ to a wall, $\kappa(t, d)$. The kernel is a Prony approximation, a
-sum of damped-oscillator modes realized by auxiliary variables (Markovian embedding), and the four
-parameters of every mode are functions of $d$. Because every mode has a non-negative spectrum for any
-parameter values, the fluctuation–dissipation theorem holds for any $d$-dependence, and the exact
-GLE-BAOAB O step keeps the temperature exact also when beads move between distances. A
-position-independent kernel (bulk fluids) is the uniform special case.
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-- **Bulk water and CO₂:** 16 parameters (4 modes) trained with exact gradients through the simulation
-  (standard autograd, memory per step set by the number of modes, not by the memory length).
-- **Water between graphene sheets:** a memory field learned in an 80 Å channel reproduces the
-  layer-resolved velocity autocorrelation functions (VACFs), transfers without retraining to
-  20–40 Å channels, and predicts the residence time of water in the contact layer, which it was not
-  trained on.
+Coarse-grained (CG) models remove degrees of freedom, and the removed degrees of freedom leave behind
+friction and noise with memory. A generalized Langevin equation (GLE) carries them through a memory
+kernel. Usually every bead gets the same kernel, as in a bulk fluid, but near interfaces and in
+confinement the memory of a molecule depends on where it is.
 
-The previous version, **DiffGLE** ([arXiv:2410.08424](https://arxiv.org/abs/2410.08424)), with a
-learnable noise filter trained by an adjoint method, is on the `v2` branch; its pipeline is still
-available here as `main.py`.
+This repository learns a **memory field**: a memory kernel that depends on a state variable of the
+bead, $\kappa(t,\zeta)$, here the distance $d$ to a wall. The field is learned **top-down**: the CG
+simulation is differentiated so that its dynamics match all-atom references.
 
-## Install
+- **Any state dependence, exact thermodynamics.** The kernel is a sum of damped-oscillator modes whose
+  parameters are functions of the state. Every mode satisfies the fluctuation–dissipation theorem (FDT)
+  for any parameter values, so the FDT and the temperature stay exact for any state dependence, also
+  when beads move between states.
+- **Exact gradients at low memory cost.** The memory is carried by a few auxiliary variables instead of
+  a velocity history, so standard autograd differentiates through the whole simulation window with a
+  memory cost set by the number of modes.
+- **Bulk fluids are the uniform case.** For bulk water and CO₂ the field is a single kernel with
+  4 modes (16 parameters).
+- **Water between graphene sheets.** A memory field learned in an 80 Å channel reproduces the
+  layer-resolved velocity autocorrelation functions (VACFs), transfers without retraining to channels
+  20–40 Å wide, and predicts how long water stays next to the wall, which it was not trained on.
 
-```bash
-pip install -r requirements.txt          # Python 3.10+, PyTorch with CUDA recommended
+> The earlier version, **DiffGLE** (learnable colored-noise filter trained with an adjoint method;
+> [Europhys. Lett.](https://doi.org/10.1209/0295-5075/ae9c6e),
+> [arXiv:2410.08424](https://arxiv.org/abs/2410.08424)), with its paper data and figure scripts, is on
+> the [`v2` branch](https://github.com/jinu-jeong/Differentiable_GLE/tree/v2).
+
+## Core idea
+
+Each CG bead of mass $m$ obeys
+
+```math
+\dot{\mathbf q}=\mathbf v,\qquad
+m\dot{\mathbf v}=\mathbf F(\mathbf q)-m\int_0^t\kappa\bigl(t-s,\zeta\bigr)\,\mathbf v(s)\,ds+\mathbf R(t),
 ```
 
-The all-atom simulations of confined water use LAMMPS through its Python module (GPU package).
-Data and outputs go to `Data/` and `Result/` (not tracked).
+with a fixed conservative CG force $\mathbf F$. The memory field is a Prony approximation, a sum of $M$
+damped-oscillator modes whose four parameters depend on the state $\zeta$ of the bead:
+
+```math
+\kappa(t,\zeta)=\sum_{k=1}^{M}a_k(\zeta)\,\bigl[e^{-A_k(\zeta)\,t}\bigr]_{11},\qquad
+A_k=\begin{pmatrix}\gamma_{1,k}&\omega_k\\-\omega_k&\gamma_{2,k}\end{pmatrix},\qquad
+a_k,\gamma_{1,k},\gamma_{2,k}>0 .
+```
+
+Each mode is realized by two auxiliary variables per degree of freedom (Markovian embedding). The
+symmetric part of $A_k$ is positive definite for any parameter values, so every slice
+$\kappa(\cdot,\zeta)$ has a non-negative spectrum and the noise matches the friction. For a wall, each
+parameter is a piecewise-linear curve in $d$ through 20 knots (2.5–20 Å), separately parallel and
+perpendicular to the wall. The velocity and auxiliary variables are propagated exactly over each time
+step (GLE-BAOAB); every one-step map preserves $\mathcal N(0,k_BT/m\,I)$, so the integrator keeps the
+temperature exact whatever the state dependence.
+
+## Installation
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Install the PyTorch build for your CUDA version first if you need a specific one. The all-atom
+simulations of confined water use LAMMPS through its Python module (GPU package). Inputs are in
+`data/` (see [Force fields and data](#force-fields-and-data)) and every run writes to its own folder in
+`results/`.
 
 ## Bulk water and CO₂
 
-Inputs: `Data/H2O`, `Data/CO2`. The preprocessed initial states, reference observables and CG pair potentials
-are included in the repository; the all-atom trajectories (see *Data* below) are needed only to rerun
-`preprocess.py`.
+The processed inputs `data/processed/H2O` and `data/processed/CO2` (initial states, reference
+observables, CG pair potentials) are included, so these runs need no download:
 
 ```bash
-python preprocess.py --system H2O                    # optional: recompute them from the all-atom trajectory
-python main.py -s H2O                                # DiffGLE filter (initial kernel of the modes)
-python -m experiments.train_osc -s H2O               # 4 modes, GLE-BAOAB, exact gradients -> Result/H2O_osc_baoab
+python main.py -s H2O                          # DiffGLE filter, used as the initial kernel of the modes
+python -m experiments.train_osc -s H2O         # 4 modes, GLE-BAOAB, exact gradients -> results/H2O_osc_baoab
 ```
 
-Reproduction scripts for the bulk comparisons are in `experiments/bulk/` (training repeats, filter with
-exact gradients, mode-count scan, measured BPTT memory, production evaluation); results go to
-`Result/bulk/`.
+Without `results/H2O` the modes start from a generic kernel. `experiments/bulk/` holds the reproduction
+runs for the bulk comparisons (training repeats, filter trained with exact gradients, mode-count scan,
+measured backpropagation memory, production evaluation); results go to `results/bulk/`.
 
 ## Water between graphene sheets
 
-**1. All-atom references** (flexible SPC/E water between frozen graphene sheets $H$ apart; same force
-field and lateral box as `Data/Confined_H2O`):
+**1. All-atom references.** Flexible SPC/E water between frozen graphene sheets $H$ apart, with the force
+field in [forcefields/](forcefields/) (same for every $H$; $H$ = 20, 30, 40, 80 Å with 447, 726, 1006, 2123
+molecules). The system is called `graphene_water_H<H>`:
 
 ```bash
-cd aa/confined_graphene
-python build_confined.py 80 2123 H80/start.data      # H = 10 A: build_h10.py
-python run_confined.py --data H80/start.data --out H80 --equil 200000 --prod 100000
-python make_dataset.py 80                            # -> Data/Confined_H2O_v2_H80 (CG system) + targets/
-python make_dataset.py 80 --slab-frame               # -> targets_slab/ (VACFs in the frame of the water slab)
+A=experiments/confined/allatom
+R=data/raw/graphene_water_H80/aa
+mkdir -p $R
+python $A/build_confined.py 80 2123 $R/start.data
+python $A/run_confined.py --data $R/start.data --out $R --equil 200000 --prod 100000
+python $A/make_dataset.py 80                          # -> data/processed/graphene_water_H80: CG system, targets/
+python $A/make_dataset.py 80 --slab-frame             # -> targets_slab/ (training targets)
 ```
 
-The water slab slides as a whole on graphene and its centre-of-mass velocity is not equilibrated in
-100 ps, so the training targets are computed in the frame of the slab (`--slab-frame`).
+On graphene the water slab slides as a whole, and its centre-of-mass velocity is not equilibrated in
+100 ps. The training targets are therefore computed in the frame of the slab (`--slab-frame`).
 
-**2. Train a memory field** on the 80 Å channel (starts from the bulk-water kernel
-`Result/H2O_osc_baoab`):
+**2. Train a memory field** on the 80 Å channel, starting from the bulk-water kernel:
 
 ```bash
-python experiments/confined/train.py --system Confined_H2O_v2_H80 --wall-gap 80 \
+python experiments/confined/train.py --system graphene_water_H80 --wall-gap 80 \
     --model knot --groups 2 --target fine --smooth 3 -n 300 --avg-last 50 --prod 50000 \
-    --out Result/memory_field_H80
+    --out results/memory_field_H80
 ```
 
-`--model knot`: every mode parameter is a piecewise-linear curve in $d$ (20 knots, 2.5–20 Å),
-separately parallel and perpendicular to the walls. Comparison models: `--model bins --bins 8 --groups 2`
-(one kernel per layer bin) and `--bins 1 --groups 1` (one kernel for all beads).
+`--smooth` weights a penalty on the curvature of the curves in $d$. Comparison models:
+`--model bins --bins 8 --groups 2` (one kernel per water layer) and `--bins 1 --groups 1` (one kernel
+for all beads).
 
 **3. Transfer to a narrower channel** without retraining (`-n 0`: production only):
 
 ```bash
-python experiments/confined/train.py --system Confined_H2O_v2_H20 --wall-gap 20 \
+python experiments/confined/train.py --system graphene_water_H20 --wall-gap 20 \
     --model knot --groups 2 --target fine -n 0 --prod 50000 \
-    --load-state Result/memory_field_H80/thermostat_state_dict.pth --out Result/memory_field_H80_in_H20
-# add --superpose to add the effects of both walls
+    --load-state results/memory_field_H80/thermostat_state_dict.pth --out results/memory_field_H80_in_H20
 ```
 
-**4. Residence in the contact layer** (not a training target):
+Add `--superpose` to add the effects of both walls.
+
+**4. Residence in the contact layer**, an observable the field is not trained on:
 
 ```bash
 python experiments/confined/residence.py aa 20                                  # all-atom
-python experiments/confined/residence.py cg 20 Result/memory_field_H80_in_H20   # CG (z_traj.npy)
+python experiments/confined/residence.py cg 20 results/memory_field_H80_in_H20  # CG
 ```
 
-## Data
+## Force fields and data
 
-Bulk and original confined inputs: download from
-[uofi.box.com](https://uofi.box.com/s/gruyslzav75ibbg0qjlh877f37le78c4) and unpack under `./Data/`:
+All potentials are in [forcefields/](forcefields/): the all-atom force field of water between graphene sheets
+(LAMMPS include and graphene coordinates) and the CG pair potentials of every system, kept fixed while the
+memory is learned. The all-atom trajectories themselves are not in the repository: run the MD (step 1
+above) or, for bulk water and CO₂, download them.
 
 ```
-Data/
-├── CO2/            AA/pos_COM.npy, vel_COM.npy;      CG/CG_CG.pot
-├── H2O/            AA/pos_COM.npy, vel_COM.npy;      CG/CG_CG.pot
-└── Confined_H2O/   AA/pos_COM.npy, vel_COM.npy, z.npy; CG/CG1_CG1.pot, CG1_GR1.pot
+data/
+├── raw/          all-atom trajectories (simulated or downloaded); read only
+│   ├── H2O/aa/, CO2/aa/
+│   └── graphene_water_H{20,30,40,80}/aa/    output of experiments/confined/allatom/run_confined.py
+└── processed/    made from raw/ and forcefields/ by the scripts; read by diffgle.systems.load_system
+    ├── H2O/, CO2/                           included in the repository
+    └── graphene_water_H<H>/                 CG system, targets/, targets_slab/
 ```
 
-`python preprocess.py` computes the reference observables and initial states in each `Data/<system>/`.
-The confined systems `Confined_H2O_v2_H<H>` are made by `aa/confined_graphene/make_dataset.py` (step 1
-above); `experiments/confined/aa_targets.py` computes the same targets for the original 80 Å trajectory
-`Data/Confined_H2O`, which serves as a cross-check.
+Nothing writes to `data/raw/`, and everything in `data/processed/` can be rebuilt: `preprocess.py` for
+`H2O` and `CO2`, `experiments/confined/allatom/make_dataset.py` for `graphene_water_H<H>`. Bulk
+trajectories: [uofi.box.com](https://uofi.box.com/s/gruyslzav75ibbg0qjlh877f37le78c4) (unpack `H2O/AA` as
+`data/raw/H2O/aa/`, same for `CO2`). Details in [data/README.md](data/README.md) and
+[forcefields/README.md](forcefields/README.md).
 
 ## Repository structure
 
-```
-diffgle/                    library
-  constants.py              units, temperature, paths
-  systems.py                SYSTEMS settings table + load_system()
-  potentials.py             tabulated CG pair forces, neighbour list
-  thermostats/
-    damped_osc.py           damped-oscillator modes (Markovian embedding, exact FDT)
-    conv.py                 DiffGLE free filter (GLE_TS) and its exact adjoint (ConvGLE)
-    langevin.py             Markovian Langevin
-  memory_field.py           memory field kappa(t, d): MemoryField, MemoryFieldSuperposed, BinnedDampedOsc,
-                            tabulated exact O step, FrozenWallBAOAB, layer-conditioned VACF
-  integrators.py            BAOAB (+ exact GLE O step), VV + Euler (DiffGLE)
-  observables.py            VACF, MSD, RDF, density, temperature
-experiments/
-  train_osc.py              bulk: damped-oscillator modes + GLE-BAOAB + exact gradients
-  eval_osc.py, check_*.py, ablation_*.py, diagnose_paper_adjoint.py   bulk: gradient, loss and integrator checks
-  bulk/                     bulk: reproduction runs (repeats, mode scan, memory, production evaluation)
-  confined/
-    train.py                memory field (and comparison kernels) for confined water
-    aa_targets.py           all-atom density and layer-conditioned VACF targets
-    residence.py            contact-layer residence and layer exchange
-aa/confined_graphene/       all-atom runs: build, run (LAMMPS), make CG system and targets
-tests/                      python -m pytest tests (memory field, damped-oscillator kernel, BAOAB, adjoint)
-main.py, preprocess.py      DiffGLE pipeline and preprocessing
-```
+| path | contents |
+|---|---|
+| `diffgle/memory_field.py` | memory field and its two-wall superposition, binned comparison kernels, tabulated exact O step, BAOAB with frozen walls, layer-resolved VACF |
+| `diffgle/thermostats/` | damped-oscillator modes (`damped_osc.py`), DiffGLE filter and its exact adjoint (`conv.py`), Langevin |
+| `diffgle/` | units, systems table, tabulated CG forces, integrators, observables |
+| `experiments/confined/` | memory-field training, all-atom targets, contact-layer residence |
+| `experiments/train_osc.py`, `experiments/bulk/` | bulk training with modes and exact gradients; reproduction runs |
+| `experiments/` (other) | gradient, loss and integrator checks for the bulk models |
+| `experiments/confined/allatom/` | all-atom runs of water between graphene sheets: build, run, make the CG system and targets |
+| `forcefields/` | all-atom force field of water between graphene; CG pair potentials of every system |
+| `data/`, `results/` | inputs (raw, processed) and run outputs; see [Force fields and data](#force-fields-and-data) |
+| `tests/` | memory field, damped-oscillator kernel, BAOAB, adjoint |
+| `main.py`, `preprocess.py` | DiffGLE pipeline and preprocessing |
 
 ## Tests
 
@@ -144,10 +178,17 @@ main.py, preprocess.py      DiffGLE pipeline and preprocessing
 python -m pytest tests
 ```
 
-`tests/test_memory_field.py` checks that every tabulated O-step map keeps $\mathcal N(0, k_BT/m\,I)$
-exactly, that beads moving between distances stay at the target temperature, the knot curves, the
-two-wall superposition and the layer-conditioned VACF.
+`tests/test_memory_field.py` checks that every tabulated one-step map preserves
+$\mathcal N(0,k_BT/m\,I)$ exactly, that beads moving between distances stay at the target temperature,
+the knot curves, the two-wall superposition and the layer-resolved VACF.
+
+## Reference
+
+For the earlier DiffGLE method, please cite:
+
+J. Jeong, I. Nadkarni, "DiffGLE: Differentiable Coarse-Grained Dynamics using Generalized Langevin
+Equation," *Europhysics Letters*. https://doi.org/10.1209/0295-5075/ae9c6e
 
 ## License
 
-© 2026 Jinu Jeong. This project is licensed under the MIT License. See the LICENSE file for details.
+© 2026 Jinu Jeong. Released under the MIT License; see [LICENSE](LICENSE).

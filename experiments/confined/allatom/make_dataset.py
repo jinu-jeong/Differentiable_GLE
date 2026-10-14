@@ -1,21 +1,22 @@
-"""Turn an aa/confined_graphene/H<H> all-atom run into (1) a CG system directory and (2) all-atom training targets.
+"""Turn the all-atom run data/raw/graphene_water_H<H>/aa into (1) a CG system and (2) all-atom training targets.
 
-(1) Data/Confined_H2O_v2_H<H>/: pos0.npy, vel0.npy (walls first, then water molecules; last production frame,
-    velocities in A/fs as in Data/Confined_H2O), z.npy (types 5 wall / 7 water), box.npy, CG/ (copy of the CG
-    potentials of Data/Confined_H2O), vacf_aa.npy, msd_aa.npy (all water, as load_system expects),
-    z_aa.npy / density_aa.npy (density along z).
-(2) Data/Confined_H2O_v2_H<H>/targets/: aa_density.npz, aa_layer_vacf.npz (8 bins, + aa_layer_vacf_noise.npz)
+(1) data/processed/graphene_water_H<H>/: pos0.npy, vel0.npy (walls first, then water molecules; last production
+    frame, velocities in A/fs), z.npy (types 5 wall / 7 water), box.npy, CG/ (copy of forcefields/cg/graphene_water),
+    vacf_aa.npy, msd_aa.npy (all water, as load_system expects), z_aa.npy / density_aa.npy (density along z).
+    Wall beads: the carbon atoms of forcefields/allatom/graphene_water/graphene_sheets.xyz (lower sheet at z = 0,
+    upper sheet moved to z = H), stored in float32 as in all CG systems.
+(2) data/processed/graphene_water_H<H>/targets/: aa_density.npz, aa_layer_vacf.npz (8 bins, + aa_layer_vacf_noise.npz)
     and aa_layer_vacf_fine.npz (22 bins with errors), with the functions of experiments/confined/aa_targets.py and
     the wall distance d = min(z, H - z).
 
-    python make_dataset.py 80
-    python make_dataset.py 80 --slab-frame    # targets only, velocities relative to the water slab (see below)
+    python experiments/confined/allatom/make_dataset.py 80
+    python experiments/confined/allatom/make_dataset.py 80 --slab-frame    # targets only, velocities relative to the water slab (see below)
 
 --slab-frame: the water slab as a whole slides along the frictionless graphene; its centre-of-mass velocity
 (x, y) decorrelates over ~10-20 ps and in a 100 ps run is not equilibrated (its energy was 0.3-3.7 times kT/2
 per component depending on the channel), which adds a nearly constant, run-dependent offset to every molecular
 VACF. With --slab-frame the slab's (x, y) centre-of-mass velocity is subtracted at every frame before the layer
-VACFs are computed; the targets go to Data/Confined_H2O_v2_H<H>/targets_slab/ (the default training targets of
+VACFs are computed; the targets go to data/processed/graphene_water_H<H>/targets_slab/ (the default training targets of
 experiments/confined/train.py) and nothing else is written.
 """
 import os
@@ -24,15 +25,18 @@ import sys
 
 import numpy as np
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 sys.path.insert(0, ROOT)
 import experiments.confined.aa_targets as ca  # noqa: E402
+
+FF = os.path.join(ROOT, "forcefields")
+CG_BOX = np.array([29.472577, 29.778001, 112.0])     # CG box: x, y periods of the graphene sheets; z not periodic
 
 H = float(sys.argv[1])
 SLAB = "--slab-frame" in sys.argv
 tag = f"H{H:g}"
-run = os.path.join(os.path.dirname(os.path.abspath(__file__)), tag)
-sysdir = os.path.join(ROOT, "Data", f"Confined_H2O_v2_{tag}")
+run = os.path.join(ROOT, "data", "raw", f"graphene_water_{tag}", "aa")
+sysdir = os.path.join(ROOT, "data", "processed", f"graphene_water_{tag}")
 tgt = os.path.join(sysdir, "targets_slab" if SLAB else "targets")
 if not SLAB:
     os.makedirs(os.path.join(sysdir, "CG"), exist_ok=True)
@@ -51,19 +55,18 @@ if SLAB:
 
 # ---- (1) CG system directory (not with --slab-frame) ----------------------------------------------------------
 def write_system():
-    old = os.path.join(ROOT, "Data", "Confined_H2O")
-    z_old = np.load(os.path.join(old, "z.npy"))
-    C = np.load(os.path.join(old, "pos0.npy"))[z_old == 5].copy()
+    C = np.loadtxt(os.path.join(FF, "allatom", "graphene_water", "graphene_sheets.xyz"), skiprows=2,
+                   usecols=(1, 2, 3)).astype(np.float32)
     C[C[:, 2] > 40, 2] = H
     pos0 = np.concatenate([C, np.asarray(x[-1], np.float64)])
     vel0 = np.concatenate([np.zeros_like(C), np.asarray(v[-1], np.float64)])
-    types = np.concatenate([np.full(len(C), 5), np.full(N, 7)]).astype(z_old.dtype)
+    types = np.concatenate([np.full(len(C), 5), np.full(N, 7)]).astype(np.int64)
     np.save(os.path.join(sysdir, "pos0.npy"), pos0)
     np.save(os.path.join(sysdir, "vel0.npy"), vel0)
     np.save(os.path.join(sysdir, "z.npy"), types)
-    np.save(os.path.join(sysdir, "box.npy"), np.load(os.path.join(old, "box.npy")))
+    np.save(os.path.join(sysdir, "box.npy"), CG_BOX)
     for f in ("CG1_CG1.pot", "CG1_GR1.pot"):
-        shutil.copy(os.path.join(old, "CG", f), os.path.join(sysdir, "CG", f))
+        shutil.copy(os.path.join(FF, "cg", "graphene_water", f), os.path.join(sysdir, "CG", f))
     c = np.zeros(1000)
     for t0 in range(0, T - 1000, 10):
         c += (vv[t0:t0 + 1000] * vv[t0]).mean((1, 2))

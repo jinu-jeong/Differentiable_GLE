@@ -1,10 +1,10 @@
 """Production evaluation of the H2O models quoted in the paper, under one protocol.
 
-Protocol: start from Data/H2O, 5000 equilibration steps, 10000
+Protocol: start from data/processed/H2O, 5000 equilibration steps, 10000
 production steps (1 fs). VACF over 1000 lags with origins every 10 steps; MSD over 1000 lags
 with origins every 100 steps (unwrapped positions); RDF from 20 frames (every 500 steps);
-kinetic temperature averaged over production. Writes Result/bulk/production_eval.json
-(scalars) and Result/bulk/production_eval_curves.pkl (curves).
+kinetic temperature averaged over production. Writes results/bulk/production_eval.json
+(scalars) and results/bulk/production_eval_curves.pkl (curves).
 
     cd Differentiable_GLE && python experiments/bulk/eval_production.py --seeds 0 1 2
     cd Differentiable_GLE && python experiments/bulk/eval_production.py --system CO2
@@ -29,7 +29,7 @@ from diffgle.systems import load_system  # noqa: E402
 from diffgle.thermostats import GLE_TS, GLE_TS_DampedOsc  # noqa: E402
 from main import integrate  # noqa: E402
 
-OUT = os.path.join(ROOT, "Result", "bulk")
+OUT = os.path.join(ROOT, "results", "bulk")
 os.makedirs(OUT, exist_ok=True)
 MODELS_CO2 = {
     "conv_diffgle": ("conv", os.path.join(RESULT_DIR, "CO2", "model_state_dict.pth"), "vveuler"),

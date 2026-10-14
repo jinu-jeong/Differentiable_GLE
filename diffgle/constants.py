@@ -12,5 +12,7 @@ TEMPERATURE = 300.0     # K, all systems
 DT = 1 / TIMEFACTOR     # 1 fs time step in internal units
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_DIR = os.path.join(PROJECT_ROOT, "Data")
-RESULT_DIR = os.path.join(PROJECT_ROOT, "Result")
+DATA_DIR = os.path.join(PROJECT_ROOT, "data")
+RAW_DIR = os.path.join(DATA_DIR, "raw")              # all-atom trajectories and CG potentials: read only
+PROCESSED_DIR = os.path.join(DATA_DIR, "processed")  # made from RAW_DIR by the scripts; one folder per system
+RESULT_DIR = os.path.join(PROJECT_ROOT, "results")   # trained models and analyses, one folder per run

@@ -12,8 +12,8 @@ so the backward pass is the hand-written discrete adjoint of the recurrence
 with the forces a_n constant (Tabulated force is detached). This is exactly the
 BPTT gradient; the O(L * W) correlations are done with FFTs.
 
-    python -m experiments.ablation_conv_bptt --lr 3e-4                  # -> Result/H2O_conv_bptt_lr0.0003
-    python -m experiments.ablation_conv_bptt --lr 3e-4 --paper-detach   # -> Result/H2O_conv_bptt_paperdetach_lr0.0003
+    python -m experiments.ablation_conv_bptt --lr 3e-4                  # -> results/H2O_conv_bptt_lr0.0003
+    python -m experiments.ablation_conv_bptt --lr 3e-4 --paper-detach   # -> results/H2O_conv_bptt_paperdetach_lr0.0003
 
 --paper-detach uses the same detached paths as GLE_TS (one kernel factor, noise path), so that
 paper-adjoint vs this run isolates the exact-through-time gradient, and this run vs the default

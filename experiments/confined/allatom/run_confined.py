@@ -1,15 +1,14 @@
 """All-atom MD of flexible SPC/E water between graphene sheets (LAMMPS through its Python module).
 
-Force field and settings copied from the input of the original 80 A system (pair lj/cut/coul/long 11 A,
-SPC/E charges and O LJ, graphene C LJ 0.069863 kcal/mol / 3.566 A, arithmetic mixing, tail correction,
-PPPM 1e-4 with slab 3, boundary p p f, harmonic O-H (1000, 1.0 A) and H-O-H (100, 109.47 deg), special_bonds
-0 0 0.5, graphene-graphene neighbours excluded, graphene not integrated, Nose-Hoover NVT 300 K / 100 fs on
-water, 1 fs). Steps: minimisation with the graphene held, equilibration, production. During production the
+Force field: forcefields/allatom/graphene_water/forcefield.lmp (flexible SPC/E water, graphene LJ, PPPM with
+the slab correction, boundary p p f). Graphene is not integrated; Nose-Hoover NVT 300 K / 100 fs on water, 1 fs.
+Steps: minimisation with the graphene held, equilibration, production. During production the
 centre-of-mass position (unwrapped) and velocity of every water molecule are stored every step (float32,
 A and A/fs) from compute com/chunk and vcm/chunk.
 
-    python run_confined.py --data H20/start.data --out H20 \     # python with the LAMMPS module (GPU package)
-        --equil 200000 --prod 100000
+    # python with the LAMMPS module (GPU package)
+    python experiments/confined/allatom/run_confined.py --data data/raw/graphene_water_H20/aa/start.data \
+        --out data/raw/graphene_water_H20/aa --equil 200000 --prod 100000
 outputs in --out: com.npy, vcm.npy (prod+1, N, 3), thermo.npz, meta.json, final.data, log.lammps
 """
 import argparse
@@ -20,6 +19,9 @@ import time
 import numpy as np
 import lammps
 from lammps import LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY
+
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+FORCEFIELD = os.path.join(ROOT, "forcefields", "allatom", "graphene_water", "forcefield.lmp")
 
 p = argparse.ArgumentParser()
 p.add_argument("--data", required=True)
@@ -37,28 +39,8 @@ units           real
 atom_style      full
 boundary        p p f
 read_data       {os.path.abspath(a.data)}
-set type 1 charge 0.4236
-set type 2 charge -0.8472
-group graphene type 3
-group water type 1 2
-pair_style      lj/cut/coul/long 11.0 11.0
-pair_coeff      1 1 0.00 0.00
-pair_coeff      2 2 0.15535 3.166
-pair_coeff      3 3 0.069863 3.5660
-pair_modify     mix arithmetic
-kspace_style    pppm 1.0e-4
-kspace_modify   slab 3
-dielectric      1.0
-pair_modify     tail yes
-bond_style      harmonic
-angle_style     harmonic
-bond_coeff      1 1000.00 1.000
-angle_coeff     1 100.0 109.47
-special_bonds   lj/coul 0.0 0.0 0.5
-neighbor        2.0 bin
+include         {FORCEFIELD}
 timestep        1
-neigh_modify    delay 0 every 1 check yes
-neigh_modify    exclude group graphene graphene
 thermo_style    custom step temp pe etotal press
 thermo          1000
 """)

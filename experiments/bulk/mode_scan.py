@@ -1,16 +1,16 @@
 """Mode-count scan for the damped-oscillator GLE (GLE-BAOAB), CG water and CG CO2.
 
 Same training as experiments/train_osc.py except the number of
-modes M: init by least-squares fit of M modes to Result/<system>/plot_dict.pkl (DiffGLE kernel),
+modes M: init by least-squares fit of M modes to results/<system>/plot_dict.pkl (DiffGLE kernel),
 torch.manual_seed(0), 3000 equilibration steps, consecutive 1200-step windows, VACF over 1000
 lags with origin stride 20, loss = sum of squared VACF differences, Adam lr 1e-2 with cosine
 decay to 5 %, grad-norm clip 1.0, 150 iterations. Production as experiments/bulk/eval_production.py:
-from Data/<system>, 5000 equilibration + 10000 production steps with BAOAB, noise seeds 0 1 2,
+from data/processed/<system>, 5000 equilibration + 10000 production steps with BAOAB, noise seeds 0 1 2,
 VACF over 1000 lags with origin stride 10, RMSE over the 1000 lags, mean kinetic T.
 
-    cd Differentiable_GLE && python experiments/bulk/mode_scan.py train -s H2O -m 2   # -> Result/modescan_H2O_M2/
+    cd Differentiable_GLE && python experiments/bulk/mode_scan.py train -s H2O -m 2   # -> results/modescan_H2O_M2/
     cd Differentiable_GLE && python experiments/bulk/mode_scan.py production -s H2O -m 2  # production only, after a crash
-    cd Differentiable_GLE && python experiments/bulk/mode_scan.py collect             # -> Result/bulk/modescan_*.pkl, modescan_summary.json
+    cd Differentiable_GLE && python experiments/bulk/mode_scan.py collect             # -> results/bulk/modescan_*.pkl, modescan_summary.json
 """
 
 import argparse
@@ -33,7 +33,7 @@ from diffgle.systems import load_system  # noqa: E402
 from diffgle.thermostats import GLE_TS_DampedOsc  # noqa: E402
 from experiments.train_osc import init_thermostat  # noqa: E402
 
-OUT = os.path.join(ROOT, "Result", "bulk")
+OUT = os.path.join(ROOT, "results", "bulk")
 os.makedirs(OUT, exist_ok=True)
 SYSTEMS = ["H2O", "CO2"]
 MODES = [1, 2, 3, 4, 6, 8]

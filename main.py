@@ -2,7 +2,7 @@
 
     python main.py -s H2O
     python main.py -s CO2
-    python main.py -s Confined_H2O      # initialised from Result/H2O (run H2O first)
+    python main.py -s graphene_water_H80
 
 Stages (all system-specific numbers come from diffgle/systems.py:SYSTEMS):
     1. Markovian Langevin baseline run (diagnostics only)
@@ -13,7 +13,7 @@ Stages (all system-specific numbers come from diffgle/systems.py:SYSTEMS):
        loss = || VACF_CG - VACF_AA ||^2, gradient w.r.t. the filter h via the adjoint
     4. Save model_state_dict.pth / plot_dict.pkl / config.json, 10000-step production run, xyz dump
 
-Outputs go to Result/<system>/ (iteration snapshots in frames/).
+Outputs go to results/<system>/ (iteration snapshots in frames/).
 Lengths are in frames: n frames = initial state + (n - 1) Euler steps of 1 fs.
 The damped-osc kernel + BAOAB + BPTT variant lives in experiments/train_osc.py.
 """
@@ -48,7 +48,7 @@ def parse_args():
     p.add_argument("--device", default="cuda:0")
     p.add_argument("--iterations", "-n", type=int, default=300)
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--output-dir", default=None, help="default: Result/<system>")
+    p.add_argument("--output-dir", default=None, help="default: results/<system>")
     p.add_argument("--pretrained", default=None, help="override the system's pretrained kernel (state dict)")
     p.add_argument("--no-pretrained", action="store_true", help="do not initialise from a pretrained kernel")
     p.add_argument("--plot-every", type=int, default=10, help="save a training snapshot every N iterations")

@@ -1,8 +1,13 @@
 """Per-system settings and data loading. Every system-specific number lives in SYSTEMS.
 
-Data/<name>/ must contain pos0.npy, vel0.npy, box.npy, vacf_aa.npy, msd_aa.npy, CG/*.pot,
-plus r_aa.npy / rdf_aa.npy (bulk) or z.npy, z_aa.npy, density_aa.npy (confined).
-See preprocess.py for how they are generated from the all-atom trajectories.
+data/processed/<name>/ must contain pos0.npy, vel0.npy, box.npy, vacf_aa.npy, msd_aa.npy, CG/*.pot,
+plus r_aa.npy / rdf_aa.npy (bulk) or z.npy, z_aa.npy, density_aa.npy (confined). They are made from
+data/raw/<name>/ by preprocess.py (H2O, CO2) or by experiments/confined/allatom/make_dataset.py
+(graphene_water_H<H>).
+
+Systems: H2O, CO2 (bulk); graphene_water_H<H>, H = 20, 30, 40, 80 (water between graphene sheets
+H A apart, all-atom references run with experiments/confined/allatom/). Names used before
+2026-10-13 are accepted through ALIASES.
 
 Trajectory lengths are counted in frames: n frames = the initial state + (n - 1) steps of 1 fs
 (this is how main.py's odeint time grid works; kept for bit-compatibility with the paper runs).
@@ -17,7 +22,7 @@ import numpy as np
 import torch
 from torchmd.systems import System
 
-from diffgle.constants import DATA_DIR, RESULT_DIR
+from diffgle.constants import PROCESSED_DIR
 from diffgle.potentials import Tabulated, Tabulated_specific, load_table
 
 WATER, WALL = 7, 5  # particle type ids in z.npy (also used as element index in xyz output)
@@ -59,25 +64,20 @@ SYSTEMS = {
         optimizer_schedule=((0, "SGD", 1e-3),),
         notes="bulk CO2, 1700 CG beads",
     ),
-    "Confined_H2O": SystemConfig(
-        mass=18.01528, filter_length=1000, langevin_gamma=0.5, baseline_frames=1000, baseline_zero_velocity=True,
-        pre_equil_frames=2000, restart="after_filter",
-        optimizer_schedule=((0, "Adam", 1e-5),),
-        diagnostic_len=500, trapezoidal_kernel=True, confined=True,
-        pretrained=os.path.join(RESULT_DIR, "H2O", "model_state_dict.pth"),
-        notes="water between frozen walls; kernel initialised from bulk H2O (run H2O first)",
-    ),
 }
-# same CG model, all-atom references re-run with the original force field by aa/confined_graphene/ (exact molecular centres
-# of mass, 300 K) for graphene sheets H = 20, 30, 40, 80 A apart: Data/Confined_H2O_v2_H<H>
-for _H in (10, 20, 30, 40, 80):
-    SYSTEMS[f"Confined_H2O_v2_H{_H}"] = SystemConfig(
+# water between graphene sheets H A apart; all-atom references run with experiments/confined/allatom/ (exact
+# molecular centres of mass, 300 K); main.py settings as for the earlier 80 A confined system of DiffGLE
+for _H in (20, 30, 40, 80):
+    SYSTEMS[f"graphene_water_H{_H}"] = SystemConfig(
         mass=18.01528, filter_length=1000, langevin_gamma=0.5, baseline_frames=1000, baseline_zero_velocity=True,
         pre_equil_frames=2000, restart="after_filter",
         optimizer_schedule=((0, "Adam", 1e-5),),
         diagnostic_len=500, trapezoidal_kernel=True, confined=True,
-        notes=f"water between graphene sheets {_H} A apart, AA re-run (aa/confined_graphene/run_confined.py)",
+        notes=f"water between graphene sheets {_H} A apart (experiments/confined/allatom/run_confined.py)",
     )
+
+# names used before 2026-10-13 (folders Data/<old name>), kept so that old commands and run configs still load
+ALIASES = {f"Confined_H2O_v2_H{_H}": f"graphene_water_H{_H}" for _H in (20, 30, 40, 80)}
 
 
 def load_system(name, device):
@@ -87,8 +87,9 @@ def load_system(name, device):
     types (N,) particle type ids, frozen (N,) bool or None, mobile (N,) bool or None,
     and targets: vacf, msd, plus rdf=(r, g) (bulk) or density=(z, rho) (confined).
     """
+    name = ALIASES.get(name, name)
     cfg = SYSTEMS[name]
-    d = os.path.join(DATA_DIR, name)
+    d = os.path.join(PROCESSED_DIR, name)
     load = lambda f: np.load(os.path.join(d, f))
 
     pos0, vel0, box = load("pos0.npy"), load("vel0.npy"), load("box.npy")

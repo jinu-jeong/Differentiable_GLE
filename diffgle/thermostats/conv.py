@@ -31,7 +31,7 @@ class GLE_TS(torch.nn.Module):
     Colored noise R_n = sum_j h_j w_{n-j} and memory kernel K_j = RACF_j m dt / (kB T)
     (RACF = autocorrelation of h) satisfy the FDT by construction. forward() returns
     dv/dt = -sum_j K_j v_{n-j} + R_n from rolling velocity / white-noise buffers.
-    trapezoidal=True halves the end taps of K (used for Confined_H2O).
+    trapezoidal=True halves the end taps of K (used for the confined systems).
     adjoint_backward() flips the buffers for odeint_adjoint's reverse pass (approximate).
 
     Note (paper behaviour, kept for reproducibility): the buffers are not rewound between

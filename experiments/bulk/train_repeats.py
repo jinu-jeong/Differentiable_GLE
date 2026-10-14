@@ -4,17 +4,17 @@ Same settings as experiments/train_osc.py: M = 4 modes, GLE-BAOAB,
 3000 equilibration steps, consecutive 1200-step windows, training VACF over 1000 lags with origin
 stride 20, loss = sum (VACF_CG - VACF_AA)^2, Adam lr 1e-2 with cosine decay to 5 %, grad-norm clip 1.0.
 
-init "diffgle" : least-squares fit of the modes to Result/<system>/plot_dict.pkl (DiffGLE kernel)
+init "diffgle" : least-squares fit of the modes to results/<system>/plot_dict.pkl (DiffGLE kernel)
 init "generic" : generic modes spread over 20 fs - 1 ps (init_kernel = "none")
 
 Each trained model is evaluated with the production protocol of experiments/bulk/eval_production.py
-(start from Data/<system>, 5000 + 10000 BAOAB steps, noise seeds 0 1 2, VACF over 1000 lags with
+(start from data/processed/<system>, 5000 + 10000 BAOAB steps, noise seeds 0 1 2, VACF over 1000 lags with
 origin stride 10, kinetic temperature over production).
 
     cd Differentiable_GLE && python experiments/bulk/train_repeats.py run -s H2O --init diffgle --seed 0
-        -> Result/repeats_H2O_diffgle_s0/run_n150.pkl (+ thermostat_n150.pth, config_n150.json)
+        -> results/repeats_H2O_diffgle_s0/run_n150.pkl (+ thermostat_n150.pth, config_n150.json)
     cd Differentiable_GLE && python experiments/bulk/train_repeats.py collect
-        -> Result/bulk/repeats_H2O.pkl, Result/bulk/repeats_CO2.pkl, Result/bulk/repeats_summary.json
+        -> results/bulk/repeats_H2O.pkl, results/bulk/repeats_CO2.pkl, results/bulk/repeats_summary.json
 """
 
 import argparse
@@ -37,7 +37,7 @@ from diffgle.observables import temperature, vacf  # noqa: E402
 from diffgle.systems import load_system  # noqa: E402
 from experiments.train_osc import init_thermostat  # noqa: E402
 
-OUT = os.path.join(ROOT, "Result", "bulk")
+OUT = os.path.join(ROOT, "results", "bulk")
 os.makedirs(OUT, exist_ok=True)
 PS2 = (1000 / TIMEFACTOR) ** 2  # internal time^-2 -> ps^-2
 T_KERNEL = np.arange(601)  # fs

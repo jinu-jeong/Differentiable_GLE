@@ -18,8 +18,8 @@ Hypotheses:
 Also: the adjoint's backward pass draws fresh noise -> A with two RNG seeds.
 
     python -m experiments.diagnose_paper_adjoint --windows 3                        # trained kernel
-    python -m experiments.diagnose_paper_adjoint --windows 3 --kernel init --out Result/H2O_adjoint_diagnosis_init
-    python -m experiments.diagnose_paper_adjoint --windows 3 --loss full --out Result/H2O_adjoint_diagnosis_fullloss
+    python -m experiments.diagnose_paper_adjoint --windows 3 --kernel init --out results/H2O_adjoint_diagnosis_init
+    python -m experiments.diagnose_paper_adjoint --windows 3 --loss full --out results/H2O_adjoint_diagnosis_fullloss
 """
 
 import argparse

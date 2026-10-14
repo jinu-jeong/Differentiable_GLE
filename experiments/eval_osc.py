@@ -1,9 +1,9 @@
 """Production evaluation of trained damped-osc thermostats (H2O), any kernel x any integrator.
 
 Same protocol as experiments/bulk/eval_production.py: 5000 equilibration steps
-from Data/H2O, then 10000 production steps; VACF with origin stride 10.
+from data/processed/H2O, then 10000 production steps; VACF with origin stride 10.
 
-    python -m experiments.eval_osc Result/H2O_osc Result/H2O_osc_baoab --integrators vv baoab
+    python -m experiments.eval_osc results/H2O_osc results/H2O_osc_baoab --integrators vv baoab
 """
 
 import argparse

@@ -1,0 +1,30 @@
+# Flexible SPC/E water between frozen graphene sheets (LAMMPS, units real, atom_style full, boundary p p f).
+# Include after read_data. Atom types: 1 H, 2 O (water), 3 C (graphene). Defines the groups "water" and
+# "graphene"; graphene atoms are not integrated by the run script (frozen).
+#
+#   water   SPC/E charges (H +0.4236 e, O -0.8472 e) and O Lennard-Jones (0.15535 kcal/mol, 3.166 A), no LJ on H;
+#           harmonic O-H bonds (1000 kcal/mol/A^2, 1.0 A) and H-O-H angle (100 kcal/mol/rad^2, 109.47 deg)
+#   carbon  Lennard-Jones 0.069863 kcal/mol, 3.566 A; water-carbon by arithmetic mixing (C-O: 0.104 kcal/mol, 3.366 A)
+#   LJ and real-space Coulomb cut at 11 A with a tail correction; PPPM 1e-4 with the slab correction (non-periodic z)
+
+set type 1 charge 0.4236
+set type 2 charge -0.8472
+group graphene type 3
+group water type 1 2
+pair_style      lj/cut/coul/long 11.0 11.0
+pair_coeff      1 1 0.00 0.00
+pair_coeff      2 2 0.15535 3.166
+pair_coeff      3 3 0.069863 3.5660
+pair_modify     mix arithmetic
+kspace_style    pppm 1.0e-4
+kspace_modify   slab 3
+dielectric      1.0
+pair_modify     tail yes
+bond_style      harmonic
+angle_style     harmonic
+bond_coeff      1 1000.00 1.000
+angle_coeff     1 100.0 109.47
+special_bonds   lj/coul 0.0 0.0 0.5
+neighbor        2.0 bin
+neigh_modify    delay 0 every 1 check yes
+neigh_modify    exclude group graphene graphene

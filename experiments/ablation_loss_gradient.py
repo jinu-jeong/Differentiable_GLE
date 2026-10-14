@@ -5,7 +5,7 @@
     gradient adjoint : odeint_adjoint with GLE_TS (main.py)
              exact   : exact discrete gradient through time (ConvGLE.backward_adjoint)
 
-Everything else is shared: initial filter Result/H2O, window of 1200 frames following each other,
+Everything else is shared: initial filter results/H2O, window of 1200 frames following each other,
 3000 equilibration frames, Adam lr 3e-4 with cosine decay to 5%, grad-norm clip 1.0, 150 iterations.
 Motivation: experiments/check_descent.py (descent test at a single kernel).
 
@@ -104,7 +104,7 @@ def train(args):
 
 def evaluate(args):
     s = load_system("H2O", args.device)
-    runs = {"initial (Result/H2O)": os.path.join(RESULT_DIR, "H2O", "model_state_dict.pth")}
+    runs = {"initial (Result/H2O)": os.path.join(RESULT_DIR, "H2O", "model_state_dict.pth")}   # label kept for older outputs
     runs.update({os.path.basename(os.path.dirname(p)): p for p in sorted(glob.glob(os.path.join(OUT, "*", "model_state_dict.pth")))})
     rows = {}
     for name, path in runs.items():

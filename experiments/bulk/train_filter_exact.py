@@ -1,14 +1,14 @@
 """Free filter (GLE_TS convention) trained with the lag-differentiated loss and the exact discrete gradient.
 
 Same procedure as the "full" + "exact" cell of experiments/ablation_loss_gradient.py (which is
-hard-coded to H2O), generalised to any system: initial filter Result/<system>/model_state_dict.pth,
+hard-coded to H2O), generalised to any system: initial filter results/<system>/model_state_dict.pth,
 loss = || vacf(V, 1000) - VACF_AA ||^2 (gradient through origins and lags), exact gradient via
 ConvGLE.backward_adjoint, window of 1200 frames following each other, 3000 equilibration frames,
 Adam lr 3e-4 with cosine decay to 5%, grad-norm clip 1.0, 150 iterations, torch.manual_seed(0).
 
     cd Differentiable_GLE && python experiments/bulk/train_filter_exact.py --system CO2
-        -> Result/CO2_conv_exact/{model_state_dict.pth, history.json}
-           Result/bulk/CO2_conv_exact_kernel.npy (GLE_TS.construct_memory kernel, flattened)
+        -> results/CO2_conv_exact/{model_state_dict.pth, history.json}
+           results/bulk/CO2_conv_exact_kernel.npy (GLE_TS.construct_memory kernel, flattened)
 """
 
 import argparse
@@ -38,8 +38,8 @@ def parse_args():
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--equil", type=int, default=3000)
     p.add_argument("--device", default="cuda:0")
-    p.add_argument("--output-dir", default=None, help="default: Result/<system>_conv_exact")
-    p.add_argument("--kernel-out", default=None, help="default: Result/bulk/<system>_conv_exact_kernel.npy")
+    p.add_argument("--output-dir", default=None, help="default: results/<system>_conv_exact")
+    p.add_argument("--kernel-out", default=None, help="default: results/bulk/<system>_conv_exact_kernel.npy")
     return p.parse_args()
 
 
@@ -88,7 +88,7 @@ def train(args):
         th.h.copy_(h)
     th.construct_memory(TEMPERATURE, s.mass.cpu(), DT)
     kernel = th.memory_kernel.detach().flatten().numpy()
-    kpath = args.kernel_out or os.path.join(ROOT, "Result", "bulk", f"{args.system}_conv_exact_kernel.npy")
+    kpath = args.kernel_out or os.path.join(ROOT, "results", "bulk", f"{args.system}_conv_exact_kernel.npy")
     os.makedirs(os.path.dirname(kpath), exist_ok=True)
     np.save(kpath, kernel)
     print(f"Saved to {out} and {kpath} (kernel length {kernel.size}); wall {time.time() - t0:.0f} s")

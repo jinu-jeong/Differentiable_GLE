@@ -1,9 +1,9 @@
 """Train a memory field (wall-distance-dependent GLE kernel) for water between graphene sheets (BPTT).
 
-System: Data/<system> (CG water beads between frozen graphene walls at z = 0 and z = --wall-gap,
+System: data/processed/<system> (CG water beads between frozen graphene walls at z = 0 and z = --wall-gap,
 tabulated CG1_CG1 / CG1_GR1 potentials, 300 K, 1 fs). Target: the all-atom VACF conditioned on the
-d-bin at the time origin, parallel and perpendicular to the walls (Data/<system>/targets_slab/,
-written by aa/confined_graphene/make_dataset.py --slab-frame, or --data-dir).
+d-bin at the time origin, parallel and perpendicular to the walls (data/processed/<system>/targets_slab/,
+written by experiments/confined/allatom/make_dataset.py --slab-frame, or --data-dir).
 
 Models (--model, --bins, --groups):
   --model knot          memory field: every mode parameter its own curve in d (knots, straight lines
@@ -11,12 +11,12 @@ Models (--model, --bins, --groups):
   --model knot --superpose   the same with the effects of both walls added (with --load-state)
   --bins 1 --groups 1   one kernel for every bead and component (position-independent)
   --bins 8 --groups 2   one kernel per d-bin, separate for (x, y) and z
-Initialisation: the bulk-water kernel Result/H2O_osc_baoab (4 modes, experiments/train_osc.py) everywhere.
+Initialisation: the bulk-water kernel results/H2O_osc_baoab (4 modes, experiments/train_osc.py) everywhere.
 --iterations 0 only runs the production evaluation of the initial kernel (bulk, or a saved one with --load-state).
 The production stores z of every bead every 5 steps (z_traj.npy) for experiments/confined/residence.py.
 
-    python experiments/confined/train.py --system Confined_H2O_v2_H80 --wall-gap 80 --model knot \
-        --groups 2 --target fine --smooth 3 -n 300 --avg-last 50 --prod 50000 --out Result/memory_field_H80
+    python experiments/confined/train.py --system graphene_water_H80 --wall-gap 80 --model knot \
+        --groups 2 --target fine --smooth 3 -n 300 --avg-last 50 --prod 50000 --out results/memory_field_H80
 """
 
 import argparse
@@ -33,10 +33,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 sys.path.insert(0, ROOT)
 from diffgle import memory_field as mf  # noqa: E402
-from diffgle.constants import DT, RESULT_DIR, TEMPERATURE, TIMEFACTOR  # noqa: E402
+from diffgle.constants import DT, PROCESSED_DIR, RESULT_DIR, TEMPERATURE, TIMEFACTOR  # noqa: E402
 from diffgle.memory_field import TabulatedGPU, ZBAOAB, ZDampedOsc, ZKnotDampedOsc, ZKnotSuperposed, layer_vacf_cg  # noqa: E402
 from diffgle.potentials import load_table  # noqa: E402
-from diffgle.systems import WALL, WATER, load_system  # noqa: E402
+from diffgle.systems import ALIASES, WALL, WATER, load_system  # noqa: E402
 from experiments.confined.aa_targets import LX, LY  # noqa: E402  (density normalisation)
 
 DATA = None          # directory of the AA targets, set in main()
@@ -48,9 +48,9 @@ def parse_args():
     p.add_argument("--model", choices=["bins", "knot"], default="bins",
                    help="bins: one kernel per d-bin; knot: memory field, every mode parameter its own curve in d "
                         "(diffgle.memory_field.MemoryField)")
-    p.add_argument("--system", default="Confined_H2O_v2_H80", help="diffgle.systems name (Data/<system>)")
+    p.add_argument("--system", default="graphene_water_H80", help="diffgle.systems name (data/processed/<system>)")
     p.add_argument("--wall-gap", type=float, default=80.0, help="distance between the graphene sheets (A)")
-    p.add_argument("--data-dir", default=None, help="directory of the AA targets (default Data/<system>/targets_slab)")
+    p.add_argument("--data-dir", default=None, help="directory of the AA targets (default data/processed/<system>/targets_slab)")
     p.add_argument("--target", choices=["coarse", "fine"], default="coarse",
                    help="AA layer VACFs on the 8 layer bins (aa_layer_vacf.npz) or on 22 fine bins (aa_layer_vacf_fine.npz)")
     p.add_argument("--smooth", type=float, default=0.0, help="weight of the knot model's smoothness penalty")
@@ -129,11 +129,12 @@ def main():
     dev = args.device
     global DATA
     mf.set_wall_gap(args.wall_gap)     # wall_distance(z) = min(z, wall_gap - z) everywhere in memory_field
-    DATA = os.path.abspath(args.data_dir) if args.data_dir else os.path.join(ROOT, "Data", args.system, "targets_slab")
+    args.system = ALIASES.get(args.system, args.system)
+    DATA = os.path.abspath(args.data_dir) if args.data_dir else os.path.join(PROCESSED_DIR, args.system, "targets_slab")
     s = load_system(args.system, dev)
     # GPU version of load_system's CG1_CG1 / CG1_GR1 forces (same forces as the fixed
     # diffgle.potentials.Tabulated_specific, without the per-step CPU spline evaluation)
-    d = os.path.join(ROOT, "Data", args.system, "CG")
+    d = os.path.join(PROCESSED_DIR, args.system, "CG")
     s.potential = TabulatedGPU(s.cell, s.types, [load_table(os.path.join(d, "CG1_CG1.pot")),
                                                  load_table(os.path.join(d, "CG1_GR1.pot"))],
                                [[WATER, WATER], [WATER, WALL]])

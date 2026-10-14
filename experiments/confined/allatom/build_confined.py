@@ -1,27 +1,25 @@
 """LAMMPS data file: flexible SPC/E water between two graphene sheets a distance H apart.
 
-Same force field and lateral box as the original 80 A system (Data/Confined_H2O): graphene coordinates are
-taken from the all-atom trajectory (Data/Confined_H2O/AA/pos_COM.npy, frame 0; lower sheet at z = 0, upper
-sheet moved from z = 80 to z = H), box x [-25.174493, 4.29808], y [-24.815001, 4.963], z [-10, H + 30]
-(non-periodic in z, as in the original input). Atom types 1 H, 2 O, 3 C; bonds/angles of type 1
+Force field forcefields/allatom/graphene_water/forcefield.lmp. Graphene: forcefields/allatom/graphene_water/
+graphene_sheets.xyz (lower sheet at z = 0, upper sheet moved from z = 80 to z = H); box x [-25.174493, 4.29808],
+y [-24.815001, 4.963], z [-10, H + 30] (non-periodic in z). Atom types 1 H, 2 O, 3 C; bonds/angles of type 1
 (O-H 1.0 A, H-O-H 109.47 deg, the equilibrium values of the input). Graphene atoms have molecule ID 0, so that
 compute chunk/atom molecule gives one chunk per water molecule.
 Water: N molecules on a lattice filling 3.0 < z < H - 3.0 with random orientations; each orientation is redrawn
 until no H/O pair with any placed molecule is closer than 1.7 A, and the script stops with an error if 200 draws
 fail. (Before 2026-10-13 only the last 400 molecules were checked and the last draw was kept after 200 failures:
 the H30-H80 start files had pairs down to 1.0 A, removed by the minimisation and 200 ps equilibration of
-run_confined.py; H = 10 needed aa/confined_graphene/build_h10.py with staggered layers.)
+run_confined.py.) Water numbers used: H = 20, 30, 40, 80 A with N = 447, 726, 1006, 2123.
 
-    python build_confined.py H N out.data
+    python experiments/confined/allatom/build_confined.py H N data/raw/graphene_water_H<H>/aa/start.data
 """
 import os
 import sys
 
 import numpy as np
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, ROOT)
-from preprocess import load_atom_types  # noqa: E402
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+GRAPHENE = os.path.join(ROOT, "forcefields", "allatom", "graphene_water", "graphene_sheets.xyz")
 
 H, N, out = float(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
 XLO, XHI, YLO, YHI = -25.174493, 4.29808, -24.815001, 4.963
@@ -32,10 +30,8 @@ qO, qH = -0.8472, 0.4236
 rOH, theta = 1.0, np.deg2rad(109.47)
 rng = np.random.default_rng(int(H * 1000) + N)
 
-# graphene from the original trajectory
-z = load_atom_types(os.path.join(ROOT, "Data", "Confined_H2O", "AA", "z.npy"))
-X0 = np.asarray(np.load(os.path.join(ROOT, "Data", "Confined_H2O", "AA", "pos_COM.npy"), mmap_mode="r")[0])
-C = X0[z == 5].copy()
+# graphene sheets at z = 0 and 80 A; the upper one is moved to z = H
+C = np.loadtxt(GRAPHENE, skiprows=2, usecols=(1, 2, 3))
 assert np.allclose(np.unique(np.round(C[:, 2], 3)), [0.0, 80.0])
 C[C[:, 2] > 40, 2] = H
 
@@ -81,7 +77,7 @@ for c in sites:
             break
     else:                                      # no orientation found: refuse instead of writing an overlap
         raise RuntimeError(f"cannot place a molecule at {c} without H/O pairs closer than 1.7 A "
-                           f"(lattice too dense for H = {H} A, N = {N}; see aa/confined_graphene/build_h10.py)")
+                           f"(lattice too dense for H = {H} A, N = {N})")
     mols.append(m)
 W = np.array(mols)                              # (N, 3, 3): O, H, H
 

@@ -4,7 +4,7 @@ conv  : the DiffGLE free filter (GLE_TS, L taps) with VV + Euler, used as is und
 osc   : damped-oscillator modes (GLE_TS_DampedOsc, M modes) with GLE-BAOAB.
 Forces are detached in both (as in training). For each setting the forward window of W steps
 is run with autograd on, a VACF-type loss is backpropagated, and the peak allocated memory
-above the pre-window baseline is recorded. Output: Result/bulk/memory_scaling.json
+above the pre-window baseline is recorded. Output: results/bulk/memory_scaling.json
 
     cd Differentiable_GLE && python experiments/bulk/measure_memory.py
 """
@@ -24,7 +24,7 @@ from diffgle.observables import vacf  # noqa: E402
 from diffgle.systems import load_system  # noqa: E402
 from diffgle.thermostats import GLE_TS, GLE_TS_DampedOsc  # noqa: E402
 
-OUT = os.path.join(ROOT, "Result", "bulk", "memory_scaling.json")
+OUT = os.path.join(ROOT, "results", "bulk", "memory_scaling.json")
 DEV = "cuda:0"
 
 

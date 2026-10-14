@@ -9,9 +9,9 @@ From z(t) of every molecule (wall distance d = min(z, H - z)):
   - exchange rate between the cores of the first two layers (transition-based: a molecule belongs to the core
     it visited last; rate = transitions 1 -> 2 per molecule and ps spent assigned to layer 1).
 
-    python experiments/confined/residence.py aa H            # all-atom run aa/confined_graphene/H<H>/com.npy (every 5 fs)
+    python experiments/confined/residence.py aa H            # all-atom run data/raw/graphene_water_H<H>/aa/com.npy (every 5 fs)
     python experiments/confined/residence.py cg H RUN_DIR    # CG run of train.py with z_traj.npy (z every 5 steps = 5 fs)
-    -> Result/residence/<label>.npz and a printed summary
+    -> results/residence/<label>.npz and a printed summary
 """
 
 import os
@@ -21,8 +21,8 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
-OUT = os.path.join(ROOT, "Result", "residence")
-AA_RUNS = os.path.join(ROOT, "aa", "confined_graphene")
+OUT = os.path.join(ROOT, "results", "residence")
+RAW = os.path.join(ROOT, "data", "raw")
 DT_PS = 0.005                 # 5 fs between frames
 T_MAX_PS = 20.0               # survival evaluated to 20 ps (CG productions are 20-50 ps)
 ORIGIN_PS = 0.5               # spacing of time origins
@@ -30,7 +30,7 @@ ORIGIN_PS = 0.5               # spacing of time origins
 
 def layer_geometry():
     """First density minimum d1 and the cores of layers 1 and 2 from the all-atom 80 A density (v2)."""
-    D = np.load(os.path.join(ROOT, "Data", "Confined_H2O_v2_H80", "targets_slab", "aa_density.npz"))
+    D = np.load(os.path.join(ROOT, "data", "processed", "graphene_water_H80", "targets_slab", "aa_density.npz"))
     d, rho = D["d"], D["rho_d"]
     m = (d > 2.5) & (d < 9)
     dd, rr = d[m], rho[m]
@@ -122,7 +122,7 @@ def analyse(z, H, label):
 def main():
     kind, H = sys.argv[1], float(sys.argv[2])
     if kind == "aa":
-        com = np.load(os.path.join(AA_RUNS, f"H{H:g}", "com.npy"), mmap_mode="r")
+        com = np.load(os.path.join(RAW, f"graphene_water_H{H:g}", "aa", "com.npy"), mmap_mode="r")
         z = np.array(com[::5, :, 2], dtype=np.float32)       # every 5 fs
         analyse(z, H, f"aa_H{H:g}")
     else:

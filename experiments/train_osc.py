@@ -7,11 +7,11 @@ through the whole window (the CG force is detached, so the graph only holds v an
 aux variables: ~0.6 MB per step for H2O, independent of the memory length, vs ~26 MB per step
 for the paper's 1000-tap filter; see experiments/bulk/measure_memory.py).
 
-    python -m experiments.train_osc -s H2O                    # -> Result/H2O_osc_baoab
-    python -m experiments.train_osc -s H2O --integrator vv    # legacy VV+Euler -> Result/H2O_osc
+    python -m experiments.train_osc -s H2O                    # -> results/H2O_osc_baoab
+    python -m experiments.train_osc -s H2O --integrator vv    # legacy VV+Euler -> results/H2O_osc
     python -m experiments.train_osc -s CO2 --n-modes 4
 
-Initialisation: least-squares fit of the modes to the kernel in Result/<system>/plot_dict.pkl
+Initialisation: least-squares fit of the modes to the kernel in results/<system>/plot_dict.pkl
 (output of main.py) if present, otherwise generic modes spread over 20 fs - 1 ps.
 """
 
@@ -41,14 +41,14 @@ def parse_args():
     p.add_argument("--n-modes", "-m", type=int, default=4)
     p.add_argument("--init-kernel", default=None,
                    help="plot_dict.pkl with a 'memory_kernel' to fit for initialisation "
-                        "(default: Result/<system>/plot_dict.pkl if present, 'none' to skip)")
+                        "(default: results/<system>/plot_dict.pkl if present, 'none' to skip)")
     p.add_argument("--lr", type=float, default=1e-2)
     p.add_argument("--window", type=int, default=1200, help="BPTT window length (steps), >= VACF length")
     p.add_argument("--equil", type=int, default=3000, help="equilibration steps before training")
     p.add_argument("--plot-every", type=int, default=10)
     p.add_argument("--integrator", choices=list(INTEGRATORS), default="baoab")
     p.add_argument("--output-dir", default=None,
-                   help="default: Result/<system>_osc_baoab (baoab) or Result/<system>_osc (vv)")
+                   help="default: results/<system>_osc_baoab (baoab) or results/<system>_osc (vv)")
     return p.parse_args()
 
 
